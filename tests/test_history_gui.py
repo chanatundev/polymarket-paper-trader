@@ -214,6 +214,8 @@ def test_reader_supports_canonical_tables_without_order_events(tmp_path: Path):
     page = reader.list_history()
     assert page.total == 1
     assert page.records[0]["execution"]["status"] == "filled"
+    assert page.records[0]["market"]["slug"] is None
+    assert page.records[0]["unknown_reasons"]["market.slug"]
     reader.close()
 
 
