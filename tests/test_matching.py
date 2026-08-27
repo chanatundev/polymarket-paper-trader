@@ -43,6 +43,15 @@ def test_fak_returns_partial_and_cancels_remainder(market, book):
     assert result.decision.reason_code == "PARTIAL_FILL_REMAINDER_CANCELLED"
 
 
+def test_fak_with_no_crossing_liquidity_is_cancelled(market, book):
+    result = PaperMatcher().match_order(
+        market, book, order(market, tif="fak", price="0.60", size="10")
+    )
+    assert result.order.status == "cancelled"
+    assert result.remaining_quantity == Decimal(10)
+    assert result.decision.reason_code == "PRICE_NOT_CROSSED"
+
+
 def test_gtc_unfilled_is_open_with_price_reason(market, book):
     result = PaperMatcher().match_order(
         market, book, order(market, tif="gtc", price="0.65", size="10")

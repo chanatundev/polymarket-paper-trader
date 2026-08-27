@@ -488,7 +488,14 @@ class PaperMatcher:
         *,
         open_order: bool = False,
     ) -> MatchResult:
-        status = OrderStatus.OPEN.value if open_order else OrderStatus.UNFILLED.value
+        is_fak = order.time_in_force.casefold() == TimeInForce.FAK.value
+        status = (
+            OrderStatus.OPEN.value
+            if open_order
+            else OrderStatus.CANCELLED.value
+            if is_fak
+            else OrderStatus.UNFILLED.value
+        )
         return MatchResult(
             order=order.with_status(status, remaining=quantity),
             fills=(),
@@ -498,7 +505,11 @@ class PaperMatcher:
                 reasons=(reason,),
                 freshness=gate.decision.freshness,
                 provenance_ids=gate.decision.provenance_ids,
-                assumptions={"paper_only": True, "queue_policy": order.queue_policy},
+                assumptions={
+                    "paper_only": True,
+                    "queue_policy": order.queue_policy,
+                    "remainder_cancelled": is_fak,
+                },
             ),
             remaining_quantity=quantity,
         )
