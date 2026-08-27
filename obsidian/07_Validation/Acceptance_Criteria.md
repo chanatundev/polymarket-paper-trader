@@ -2,7 +2,7 @@
 type: acceptance-criteria
 project: polymarket-paper-trader
 status: proposed
-updated: 2026-08-26
+updated: 2026-08-27
 ---
 
 # Acceptance Criteria
@@ -27,6 +27,14 @@ updated: 2026-08-26
 - [ ] Replaying the same dataset/configuration produces the same ledger/report checksum.
 - [ ] CLI/MCP outputs are structured, bounded, and explain rejected/stale/unfilled decisions.
 
+## Local trade-history GUI
+
+- [ ] `pm-trader --data-dir <path> gui` can open a selected paper-trading data directory on loopback without requiring provider access, credentials, or a frontend build service.
+- [ ] The GUI lists bounded, newest-first canonical paper fills and compatible legacy trades, preserves the source kind, supports allow-listed filters, and has clear empty/loading/error states.
+- [ ] Selecting a row shows the available market/outcome, order, fill, accounting, timestamps, run/dataset, provenance, warnings, model/queue/latency assumptions, and explicit unknown reasons.
+- [ ] The GUI displays a persistent paper-only/read-only notice and does not provide create, edit, cancel, submit, sign, redeem, credential, or fund controls.
+- [ ] Integration/static checks prove GUI routes are GET-only, bounded, parameterized, provider-free, and do not mutate SQLite; a manual review confirms keyboard navigation and readable state cues.
+
 ## Safety
 
 - [ ] Paper mode cannot sign, submit, cancel, redeem, or move live funds.
@@ -36,4 +44,3 @@ updated: 2026-08-26
 ## Release evidence
 
 Every checked box must link to a test result, fixture, report, or human-review record. Until then, this document remains a proposed checklist.
-

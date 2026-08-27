@@ -1,21 +1,19 @@
 ---
 type: next-actions
 project: polymarket-paper-trader
-updated: 2026-08-26
+updated: 2026-08-27
 ---
 
 # Next Actions
 
-1. **Freeze current response fixtures.** Capture sanitized Gamma keyset, event-by-slug, public-search, CLOB market, book, fee-rate, and price-history shapes with retrieval timestamps. Done when fixtures contain no secrets and every required field has a contract assertion.
-2. **Define the canonical schema.** Specify typed records and unknown/error behavior for market state, books, events, fees, orders, fills, and ledger entries. Done when the matcher can consume domain objects without provider-specific conditionals.
-3. **Write compatibility tests before adapter changes.** Reproduce the current parser gaps and encode desired behavior for current and legacy payloads. Done when failures identify a single field/route/semantic mismatch.
-4. **Implement the fee policy in isolation.** Cover dynamic rate/exponent, maker/taker, rounding, missing schedule, and rebate estimates. Done when golden fixtures and conservation tests pass.
-5. **Implement the standalone matcher.** Add partial fills, latency, queue policy, order types, post-only, expiry, tick/minimum-size checks, and explainable rejection reasons. Done when golden order-book scenarios pass.
-6. **Add recording/replay.** Store provenance and reconnect gaps; replay with deterministic configuration. Done when repeated runs produce the same ledger checksum.
-7. **Expose structured CLI/MCP workflows.** Add discovery, inspect, simulate, replay, report, and explain operations. Done when an external caller can complete the workflow without private database knowledge.
-8. **Run the validation matrix.** Execute local tests, bounded read-only live probes, and a human review of paper-only enforcement. Done when each acceptance criterion has evidence or an explicit deferral.
+1. **Define the GUI read model.** Map canonical fills and legacy trades into one bounded history/detail contract, including a stable display ID, source kind, market labels when persisted, and explicit unknowns when they are not.
+2. **Add safe read access.** Extend the SQLite store/query service with allow-listed filters, newest-first pagination, detail joins, and response bounds. Keep the UI independent of private table layout and prevent arbitrary SQL.
+3. **Preserve reviewer context.** Ensure canonical simulation records retain or expose market/outcome labels, order status, ledger/report links, provenance IDs, timestamps, model versions, queue/latency assumptions, and warnings needed by the detail view.
+4. **Build the local GUI.** Add static HTML/CSS/JavaScript and a `pm-trader --data-dir .pm-trader gui` loopback launcher with list, filter, selection/detail, loading, empty, error, and paper-only/read-only states.
+5. **Validate the GUI slice.** Seed canonical and legacy fixtures; test list/detail correctness, filters, bounds, keyboard navigation, HTML escaping, no provider calls, no SQLite mutation, and no write-like route.
+6. **Update user-facing run instructions.** Document the launch command, data-directory behavior, supported filters, displayed evidence boundaries, and the fact that paper fills/P&L are model outputs.
+7. **Complete release gates.** Keep bounded current-provider probes, dataset-sharing review, and human review of paper-only/report wording open until evidence is recorded.
 
 ## Immediate implementation slice
 
-The smallest useful slice is: one current market fixture -> normalized market/book -> one paper limit order -> one or more simulated fills -> dynamic fee entry -> reproducible report. It should not require a WebSocket recorder or any authenticated provider access.
-
+The smallest useful GUI slice is: one seeded simulation store -> bounded trade-history list -> selected trade detail -> linked report/ledger/provenance context. It should not require a WebSocket recorder, provider access, credentials, or a new frontend build service.

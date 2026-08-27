@@ -1,7 +1,7 @@
 ---
 type: requirements
 project: polymarket-paper-trader
-updated: 2026-08-26
+updated: 2026-08-27
 ---
 
 # Requirements
@@ -27,6 +27,9 @@ Requirements are intentionally phrased so they can be tested without claiming li
 | FR-013 | P1 | Expose discovery, inspection, simulation, replay, and reporting through structured CLI and MCP operations. | CLI/MCP contract tests |
 | FR-014 | P0 | Enforce paper-only mode: no live order creation, signing, submission, cancellation, redemption, or fund movement. | Static/negative tests |
 | FR-015 | P1 | Explain why a market is not eligible, why an order was rejected, why a paper order did not fill, and which data/assumption affected a result. | Explainability fixtures |
+| FR-016 | P1 | Provide a local GUI that lists bounded, newest-first history of canonical paper fills and compatible legacy trades, with useful filters plus clear empty and error states. | Trade-history query and GUI tests |
+| FR-017 | P1 | Let a reviewer select a history row and inspect market/outcome identifiers when available, order and fill quantities/prices/notional, status, time-in-force, fees, rebate estimates, timestamps, run/dataset, provenance, model/queue/latency assumptions, and linked warnings/report context. | Trade-detail contract and GUI tests |
+| FR-018 | P0 | Keep the GUI local and read-only: it must not make provider requests, accept credentials, mutate SQLite, or expose order creation, signing, submission, cancellation, redemption, or fund movement controls. | Static, route, and read-only integration tests |
 
 ## Non-functional requirements
 
@@ -38,4 +41,6 @@ Requirements are intentionally phrased so they can be tested without claiming li
 | NFR-004 | Sensitive values are excluded from datasets, logs, fixtures, reports, and MCP responses. |
 | NFR-005 | Resource limits are explicit for page size, history fidelity, recorder duration, replay size, and MCP response size. |
 | NFR-006 | Tests cover current fixtures and legacy compatibility fixtures where preserving source behavior is intentional. |
-
+| NFR-007 | GUI list/detail reads are bounded, parameterized, and preserve the same unknown, warning, provenance, and paper/live evidence distinctions as CLI/MCP outputs. |
+| NFR-008 | The first GUI slice remains dependency-light: reuse Python/SQLite and serve static HTML/CSS/JavaScript without requiring a separate frontend build service. |
+| NFR-009 | The GUI is keyboard-navigable, has readable status/error/empty states, and does not depend on hover-only or color-only meaning. |

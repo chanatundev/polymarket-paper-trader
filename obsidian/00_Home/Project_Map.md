@@ -1,14 +1,14 @@
 ---
 type: project-map
 project: polymarket-paper-trader
-updated: 2026-08-26
+updated: 2026-08-27
 ---
 
 # Project Map
 
 ```mermaid
 flowchart LR
-  G[Gamma API\nmarkets events search] --> N[Canonical normalizer]
+  GA[Gamma API\nmarkets events search] --> N[Canonical normalizer]
   C[CLOB API\nbooks prices history] --> N
   D[Data API\nactivity positions trades] --> N
   W[Market WebSocket\nbook and trade events] --> N
@@ -21,6 +21,9 @@ flowchart LR
   M --> L[Portfolio and P&L ledger]
   L --> X[CLI and MCP]
   S --> X
+  S --> Q[Bounded trade-history query service]
+  L --> Q
+  Q --> U[Local read-only GUI]
 ```
 
 ## Boundaries
@@ -34,15 +37,16 @@ flowchart LR
 | Matching engine | Simulate paper orders and fills | Signing or submitting real orders |
 | Portfolio ledger | Track cash, positions, fees, rebates, exposure, and P&L | Treating paper P&L as realized cash |
 | CLI/MCP | Make research operations inspectable and agent-friendly | Bypassing safety gates |
+| Trade-history query service | Join stored fills/trades to order, ledger, report, and provenance context with bounded reads | Calling providers or mutating the store |
+| Local GUI | Present stored paper-trade history and detail for human review | Live monitoring, order controls, or data writes |
 
 ## Primary dependency flow
 
-`provider observations -> normalized market state -> freshness/state gate -> recorded dataset or live paper stream -> matching -> ledger -> report`
+`provider observations -> normalized market state -> freshness/state gate -> recorded dataset or live paper stream -> matching -> ledger -> report -> bounded trade-history query -> local GUI`
 
 ## Vault links
 
 - Strategy: [[../02_Strategy/Project_Thesis|Project thesis]]
 - Requirements: [[../03_Requirements/Requirements|Requirements]]
-- Design: [[../04_Design/System_Overview|System overview]]
+- Design: [[../04_Design/System_Overview|System overview]], [[../04_Design/Trade_History_GUI|Trade-history GUI]]
 - Validation: [[../07_Validation/Validation_Plan|Validation plan]]
-

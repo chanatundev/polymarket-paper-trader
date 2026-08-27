@@ -1,7 +1,7 @@
 ---
 type: success-metrics
 project: polymarket-paper-trader
-updated: 2026-08-26
+updated: 2026-08-27
 ---
 
 # Success Metrics
@@ -16,8 +16,8 @@ updated: 2026-08-26
 | SM-006 | Safety | No paper-mode path imports signing/submission behavior or writes to a live trading endpoint | Static and negative tests |
 | SM-007 | Agent ergonomics | CLI/MCP responses explain state, freshness, skipped fills, fees, and assumptions in structured form | Tool contract tests |
 | SM-008 | Honest performance | A documented benchmark reports ingestion, replay, and memory behavior on a declared fixture size | Benchmark record |
+| SM-009 | Human trade review | A reviewer can launch the local GUI, scan bounded past-trade history, and inspect a selected trade's accounting and evidence without direct SQL access | GUI integration test and manual review |
 
 ## Interpretation
 
 These are product-quality metrics, not trading-performance promises. Strategy returns should be reported only with dataset coverage, fees, latency, and uncertainty visible.
-

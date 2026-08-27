@@ -1,7 +1,7 @@
 ---
 type: rejected-ideas
 project: polymarket-paper-trader
-updated: 2026-08-26
+updated: 2026-08-27
 ---
 
 # Rejected Ideas
@@ -26,3 +26,6 @@ Rejected. Silent defaults can turn missing fees, prices, or state into false con
 
 Rejected for now. The existing Python, SQLite, CLI, and MCP shape provides a useful migration surface; redesign only after the canonical domain model and vertical slice expose real needs.
 
+## R-I-006 — Turn the trade-history GUI into a live trading dashboard
+
+Rejected for this slice. Live provider refresh, alerts, credentials, order controls, and authenticated execution would change the security and operational boundary. The requested GUI remains a local read-only view of stored paper history; live monitoring requires a separate decision and release evidence.

@@ -1,7 +1,7 @@
 ---
 type: project-goals
 project: polymarket-paper-trader
-updated: 2026-08-26
+updated: 2026-08-27
 ---
 
 # Goals
@@ -23,9 +23,9 @@ updated: 2026-08-26
 - Preserve and improve CLI/MCP discovery, inspection, simulation, and reporting tools.
 - Add structured “why not tradable,” “why not filled,” and “what data is stale” explanations.
 - Provide compact reports that an agent can inspect without loading raw datasets.
+- Provide a lightweight local GUI where a human can scan past paper trades and drill into their provenance, assumptions, and accounting context.
 
 ## P3 — Keep the safety boundary legible
 
 - Make paper-only mode the default and enforce it in code paths and configuration.
 - Keep credentials, signing, order submission, cancellation, redemption, and live fund movement out of the initial implementation.
-

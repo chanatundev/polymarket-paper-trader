@@ -1,7 +1,7 @@
 ---
 type: constraints
 project: polymarket-paper-trader
-updated: 2026-08-26
+updated: 2026-08-27
 ---
 
 # Constraints
@@ -35,9 +35,17 @@ updated: 2026-08-26
 - Keep bounded storage and response sizes so long-running recorders cannot grow without policy.
 - Avoid undocumented endpoints when official public APIs cover the use case.
 
+## GUI
+
+- The first GUI is a local inspection surface for stored paper fills/trades, not a live market terminal.
+- Bind the local server to loopback by default and use a dedicated bounded read/query service; the browser must not read arbitrary SQLite tables or accept raw SQL.
+- GUI routes are read-only and must not call provider adapters, accept credentials, or expose order or account mutation controls.
+- Reuse the existing Python/SQLite dependency-free shape and static assets; do not introduce a frontend build service for the first slice.
+- Do not dump raw payloads into the list view. Detail views may expose bounded sanitized provenance and assumptions, with unknown values and reasons kept visible.
+- Preserve the paper-only banner and distinguish model output, provider observation, and live/human-review gates in the UI copy.
+
 ## Documentation and operations
 
 - Research dates, source URLs, fixture versions, and live-probe boundaries must be recorded.
 - Unknowns and deferred human decisions remain visible in [[../09_Decisions/Open_Questions|Open questions]].
 - No canonical vault logs are updated by this project unless explicitly requested.
-

@@ -1,7 +1,7 @@
 ---
 type: project-thesis
 project: polymarket-paper-trader
-updated: 2026-08-26
+updated: 2026-08-27
 ---
 
 # Project Thesis
@@ -17,6 +17,7 @@ The best successor is an event-driven, V2-aware paper-research workbench rather 
 3. **Safety:** paper-only side effects make experimentation cheap and keep credentials and funds out of the first product.
 4. **Agent usability:** CLI and MCP operations return structured evidence, not opaque text or silently defaulted fields.
 5. **Extensibility:** a versioned provider-normalization boundary makes API changes local and testable.
+6. **Human review:** a small local history view lets a reviewer inspect what happened without learning the private SQLite schema or mistaking a paper fill for a live execution.
 
 ## Strategic bet
 
@@ -26,6 +27,6 @@ Research quality will improve more from truthful data and execution simulation t
 
 - Default mode: public-data paper simulation.
 - Research mode: recorded-data replay with deterministic seeds and declared assumptions.
+- Review mode: a loopback-only, read-only GUI over stored paper trades and their linked evidence.
 - Optional future mode: live read-only monitoring, only after paper acceptance criteria pass.
 - Not a promise: profitability, execution equivalence, or protection from provider/market risk.
-

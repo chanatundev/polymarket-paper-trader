@@ -1,7 +1,7 @@
 ---
 type: roadmap
 project: polymarket-paper-trader
-updated: 2026-08-26
+updated: 2026-08-27
 ---
 
 # Roadmap
@@ -44,9 +44,16 @@ Improve CLI/MCP operations, structured explanations, compact reports, and exampl
 
 **Exit:** an agent can discover, inspect, simulate, replay, and explain a run without reading internal SQLite tables.
 
-## Phase 5 — Optional read-only operations
+## Phase 5 — Local trade-history GUI
 
-Consider a read-only monitor/alert layer for freshness and market changes. Do not add authenticated writes by implication.
+Implement the approved lightweight GUI for reviewing stored canonical paper fills and compatible legacy trades. Add a bounded read model/query service, friendly metadata enrichment where the canonical record lacks market labels, a loopback-only static browser surface, and a `pm-trader gui` launch path. Keep the GUI strictly read-only and local.
+
+**Depends on:** Phases 0–4, [[../09_Decisions/Decision_Log|Decision D-005]], and the [[../04_Design/Trade_History_GUI|GUI design]].
+
+**Exit:** a seeded SQLite store can be opened through the GUI; a reviewer can filter and select a past trade; detail shows available order/fill/ledger/report/provenance/assumption data; bounds, empty/error states, keyboard access, and no-write/no-provider behavior are tested.
+
+## Phase 6 — Optional live read-only operations
+
+Consider a live read-only monitor or alert layer for freshness and market changes only after the GUI and all prior acceptance criteria pass. Do not add authenticated writes by implication.
 
 **Depends on:** all prior acceptance criteria and a new product/security decision.
-

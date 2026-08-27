@@ -1,7 +1,7 @@
 ---
 type: validation-plan
 project: polymarket-paper-trader
-updated: 2026-08-26
+updated: 2026-08-27
 ---
 
 # Validation Plan
@@ -16,6 +16,7 @@ updated: 2026-08-26
 | Replay tests | Determinism and provenance for a declared dataset/configuration | That the dataset represents all live liquidity |
 | Bounded live read-only probes | Current endpoint reachability and response shape | Safety of writes, future availability, or trading results |
 | Static/negative checks | No secret/signing/live-write path in paper mode | Human operational behavior outside the repository |
+| GUI integration | Bounded local list/detail behavior over seeded canonical and legacy records | Live provider behavior, visual quality beyond the tested/manual review surface |
 | Human review | Paper-only boundary, assumptions, and report honesty | Automatic correctness of all provider behavior |
 
 ## Required scenarios
@@ -34,6 +35,11 @@ updated: 2026-08-26
 - recorder reconnects from an authoritative snapshot after a gap;
 - repeated replay produces identical ledger/report output;
 - paper mode has no live write or signing side effect.
+- canonical fills and legacy trades normalize into a bounded newest-first GUI history view;
+- selecting a GUI row shows the required execution, accounting, provenance, warning, and assumption fields without silently filling unknowns;
+- GUI filters, missing records, malformed local data, and response limits produce safe structured states;
+- GUI routes are GET-only, make no provider calls, accept no credentials, and do not mutate SQLite;
+- GUI output escapes stored text and remains keyboard-navigable with status meaning that is not color-only.
 
 ## External and human gates
 
@@ -41,4 +47,4 @@ updated: 2026-08-26
 - Review official documentation changes for CLOB V2, fees, pagination, and real-time channels.
 - Review whether any research dataset contains personal, credential, or wallet-sensitive data before sharing it.
 - Have a human review the paper-only boundary and the wording of any strategy-performance report.
-
+- Manually review the GUI's paper-only/read-only banner, keyboard access, focus order, empty/error states, and clarity of unknown/provenance labels.

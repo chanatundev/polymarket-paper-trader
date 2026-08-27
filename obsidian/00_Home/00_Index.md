@@ -1,8 +1,8 @@
 ---
 type: project-index
 project: polymarket-paper-trader
-status: planning
-updated: 2026-08-26
+status: core-complete-gui-planned
+updated: 2026-08-27
 links:
   - "[[300_Maps/coding|Coding]]"
   - "[[300_Maps/engineering|Engineering]]"
@@ -10,7 +10,7 @@ links:
 
 # Polymarket Paper Trader
 
-An agent-first, paper-only research and simulation workbench for Polymarket. The project keeps the useful CLI/MCP surface of the source repository while updating its market-data, order-book, fee, and execution models for current Polymarket behavior.
+An agent-first, paper-only research and simulation workbench for Polymarket. The project keeps the useful CLI/MCP surface of the source repository while updating its market-data, order-book, fee, and execution models for current Polymarket behavior. A lightweight local browser GUI is planned for reviewing stored paper trades.
 
 ## Start here
 
@@ -20,12 +20,13 @@ An agent-first, paper-only research and simulation workbench for Polymarket. The
 - [[../01_Research/Sources|Research and sources]]
 - [[../02_Strategy/Project_Thesis|Project thesis]]
 - [[../04_Design/System_Overview|System overview]]
+- [[../04_Design/Trade_History_GUI|Trade-history GUI]]
 - [[../06_Execution/Roadmap|Roadmap]]
 - [[../06_Execution/Next_Actions|Next actions]]
 
 ## Current decision
 
-Build a V2-aware simulator and research tool first. Authenticated live execution is explicitly out of scope until a separate security and product decision authorizes it.
+Keep the V2-aware simulator and research tool paper-only, and add a loopback-only, read-only GUI for reviewing stored trades. Authenticated live execution and live-provider dashboarding remain explicitly out of scope.
 
 ## Navigation
 
@@ -35,7 +36,7 @@ Build a V2-aware simulator and research tool first. Authenticated live execution
 | Research | [[../01_Research/Sources|Sources]] |
 | Strategy | [[../02_Strategy/Project_Thesis|Thesis]], [[../02_Strategy/Goals|Goals]], [[../02_Strategy/Scope_and_Non_Goals|Scope]], [[../02_Strategy/Success_Metrics|Success metrics]] |
 | Requirements | [[../03_Requirements/Requirements|Requirements]], [[../03_Requirements/Constraints|Constraints]] |
-| Design | [[../04_Design/System_Overview|System overview]] |
+| Design | [[../04_Design/System_Overview|System overview]], [[../04_Design/Trade_History_GUI|Trade-history GUI]] |
 | Execution | [[../06_Execution/Roadmap|Roadmap]], [[../06_Execution/Next_Actions|Next actions]] |
 | Validation | [[../07_Validation/Validation_Plan|Validation plan]], [[../07_Validation/Acceptance_Criteria|Acceptance criteria]] |
 | Risks | [[../08_Risks/Risk_Register|Risk register]] |
@@ -43,5 +44,4 @@ Build a V2-aware simulator and research tool first. Authenticated live execution
 
 ## Evidence boundary
 
-This knowledge base records a source audit and a proposed design. It does not claim that the improved implementation exists, that live providers will remain stable, or that paper results predict real-world profitability.
-
+The core successor implementation exists in the selected checkout and its local evidence is recorded in the root `IMPLEMENTATION.md`. The GUI remains planned until its implementation and validation gates are complete. This knowledge base does not claim that live providers will remain stable or that paper results predict real-world profitability.

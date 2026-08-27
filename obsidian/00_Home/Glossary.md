@@ -1,7 +1,7 @@
 ---
 type: glossary
 project: polymarket-paper-trader
-updated: 2026-08-26
+updated: 2026-08-27
 ---
 
 # Glossary
@@ -33,4 +33,6 @@ updated: 2026-08-26
 | fill ledger | Append-only record of simulated executions, quantities, prices, fees, rebates, and provenance. |
 | maker rebate | A programmatic reward distributed to eligible liquidity providers; paper estimates are not guaranteed payouts. |
 | pUSD | Current collateral unit referenced by CLOB V2 documentation. |
-
+| trade history | A bounded, newest-first view that normalizes canonical paper fills and compatible legacy trade rows for inspection. |
+| trade-history GUI | A local loopback browser surface for reading stored paper trades and their related order, ledger, report, provenance, and assumption data. |
+| provenance | The source observation, timestamps, schema/model versions, and identifiers needed to trace a simulated result. |

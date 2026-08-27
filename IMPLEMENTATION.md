@@ -1,13 +1,13 @@
 ---
 type: implementation-checklist
 project: polymarket-paper-trader
-status: implementation-complete-pending-live-human-gates
-updated: 2026-08-26
+status: core-implementation-complete-gui-pending
+updated: 2026-08-27
 ---
 
 # Implementation Checklist
 
-This is the implementation TODO list for the planning vault in this project. It is derived from the requirements, constraints, roadmap, validation plan, and accepted decisions in the numbered directories below. It does not add product scope or prescribe a technical feature/specification that the vault does not already require.
+This is the implementation checklist for the planning vault in this project. It is derived from the requirements, constraints, roadmap, validation plan, and accepted decisions in the numbered directories below, including the explicitly requested local trade-history GUI recorded as D-005. It does not authorize live execution, provider writes, or a GUI feature outside that decision.
 
 ## How to use this file
 
@@ -21,6 +21,7 @@ This is the implementation TODO list for the planning vault in this project. It 
 
 - The source audit and planning pass are complete.
 - The successor implementation is complete in this user-selected checkout. Local evidence is linked below; live-provider and human-review gates remain separate.
+- The next product slice is a planned local, read-only GUI for viewing past canonical paper fills and compatible legacy trades. No GUI implementation evidence exists yet.
 - The initial product is public-data, paper-only research and simulation. It must not create, sign, submit, cancel, or redeem live orders or move live funds.
 - Paper fills are model outputs, not evidence of live execution or profitability.
 
@@ -77,6 +78,24 @@ Complete this phase before changing provider adapters or building the matcher.
 - [x] Provide compact reports that show fees, latency, data coverage, uncertainty, paper/live evidence boundaries, exposure, and P&L assumptions. Do not present paper P&L as realized cash or promise positive returns. (evidence: `pm_trader/ledger.py::report`, `pm_trader/models.py::SimulationReport`, `README.md`, `tests/test_cli_mcp.py::test_cli_simulation_is_structured_and_paper_only`)
 - [x] Add examples or fixtures covering a discovery-to-inspection-to-simulation-to-replay workflow that an agent can inspect without loading raw datasets. (evidence: `examples/discovery_to_replay.py`, `examples/README.md`, `fixtures/`)
 
+## Phase 5 — Local trade-history GUI
+
+This phase is approved for planning by D-005 but is not implemented by the current checkout. It adds human inspection of stored paper history without adding a live market terminal or order-control surface.
+
+- [ ] Define a bounded `TradeHistoryRecord` list/detail contract that normalizes canonical `fills` and compatible legacy `trades`, keeps `source_kind` visible, and uses stable history IDs. (Requirements FR-016–017; [Trade-history GUI](obsidian/04_Design/Trade_History_GUI.md))
+- [ ] Add a dedicated parameterized read/query service over SQLite that joins fills, orders, order events, ledger entries, simulation runs, reports, and legacy trades without exposing raw SQL to the UI. Apply allow-listed filters, newest-first ordering, pagination, and existing response bounds. (Requirements FR-016–018; NFR-007)
+- [ ] Preserve or non-destructively capture friendly market/outcome metadata for canonical history. If it is absent, expose the asset/market ID and an explicit unknown reason rather than making a provider request or guessing. (Requirements FR-017; Risk R-013)
+- [ ] Add a dependency-light local browser server and `pm-trader gui` launcher. Bind to `127.0.0.1` by default, serve static assets, expose only bounded `GET` history/detail routes, and avoid provider adapters, credentials, and all write-capable workflows. (Requirements FR-018; NFR-008)
+- [ ] Build the list/filter/detail UI with a persistent paper-only/read-only notice, execution/accounting/evidence/assumption sections, and clear loading, empty, malformed-store, missing-detail, warning, and unknown states. (Requirements FR-016–018; NFR-009)
+- [ ] Add canonical/legacy seeded integration fixtures and route/static tests for list/detail joins, filters, bounds, HTML escaping, keyboard navigation, no provider calls, no SQLite mutation, and no write-like endpoint. (Acceptance Criteria; Validation Plan)
+- [ ] Update `README.md` and `docs/CLI.md` with the launch command, data-directory behavior, filters, limits, and paper/live evidence boundary after the GUI is implemented. (NFR-007–008)
+
+### Phase 5 exit gate
+
+- [ ] A reviewer can launch the GUI against a seeded data directory, find a past trade, select it, and inspect its linked order/fill/ledger/report/provenance/assumption context without direct SQL access.
+- [ ] The GUI remains local/read-only and the tests prove it does not call a provider or mutate the store.
+- [ ] The GUI acceptance items in `obsidian/07_Validation/Acceptance_Criteria.md` have linked evidence; unsupported visual/accessibility claims remain human-review gates.
+
 ## Validation and release evidence
 
 The vault's acceptance checklist remains proposed until each checked item has linked evidence. Complete the following before calling the implementation accepted.
@@ -121,7 +140,7 @@ The vault's acceptance checklist remains proposed until each checked item has li
 Resolve these in [Open Questions](obsidian/09_Decisions/Open_Questions.md) or a new decision record before the related scope is expanded. Their defaults are not permission to implement additional features.
 
 - [x] **OQ-001:** Confirm the implementation checkout/source ownership if work needs the audited `/tmp` clone. This checklist is located in the user-selected project directory; do not assume the audited clone is the implementation target. (evidence: user-selected implementation path `/Users/chanatun/code/projects/polymarket-paper-trader`; audited `/tmp` source was read-only context)
-- [ ] **OQ-002:** Decide whether v0.x needs a web UI. The current default is CLI/MCP first.
+- [x] **OQ-002:** Decide whether v0.x needs a GUI. Add the requested local, loopback-only, read-only trade-history GUI; keep live dashboarding and order control out of this scope. (evidence: user request on 2026-08-27; D-005; `obsidian/04_Design/Trade_History_GUI.md`)
 - [ ] **OQ-003:** Choose the first recorded market family before Phase 1: crypto, sports, or general events.
 - [ ] **OQ-004:** Set the acceptable retention limit for raw book/event recordings.
 - [ ] **OQ-005:** Decide whether to include maker-rebate estimates before provider-confirmed reward data exists. The current default is visibly labeled optional output.
@@ -131,8 +150,8 @@ Resolve these in [Open Questions](obsidian/09_Decisions/Open_Questions.md) or a 
 ### Implementation-scoped defaults (not owner decision records)
 
 - OQ-001 is resolved for this run by the user-selected checkout: `/Users/chanatun/code/projects/polymarket-paper-trader` (a symlinked iCloud checkout). The audited `/tmp` source was used only as read-only compatibility context.
-- The implementation uses the current bounded defaults while the remaining decision checkboxes stay open: CLI/MCP first; general-event fixtures; 50 MiB and 100,000-observation recording bounds; 10,000 history points; 100,000 replay events; 64 KiB agent responses; visibly labeled optional rebate estimates; one declared fee-model version per run; and no authenticated execution.
-- OQ-002 through OQ-007 remain unchecked because these defaults are implementation constraints, not owner approval for a web UI, a market-family commitment, a product-retention policy, provider-confirmed rewards, multi-model replay, or authenticated execution.
+- The implementation uses the current bounded defaults while the remaining decision checkboxes stay open: CLI/MCP remains the agent-facing surface; the GUI is local/read-only over stored history; general-event fixtures; 50 MiB and 100,000-observation recording bounds; 10,000 history points; 100,000 replay events; 64 KiB agent responses; visibly labeled optional rebate estimates; one declared fee-model version per run; and no authenticated execution.
+- OQ-002 is resolved only for the requested local history GUI. OQ-003 through OQ-007 remain unchecked because their defaults are implementation constraints, not owner approval for a market-family commitment, a product-retention policy, provider-confirmed rewards, multi-model replay, live monitoring, or authenticated execution.
 
 ## Accepted implementation posture
 
@@ -143,6 +162,7 @@ These are the vault's current planning decisions and invariants, not new feature
 - Preserve the existing Python, SQLite, CLI, and MCP shape where that reduces migration risk, while keeping adapters, domain models, matching, ledger, and interfaces independently testable.
 - Treat current public API behavior as dated, sanitized, fixture-backed evidence rather than a permanent contract.
 - Unknown is not zero; stale or gapped state is visible; every fill is explainable; fees and rebates remain separate; replay is deterministic by declaration; research artifacts contain no credentials.
+- The GUI is a bounded local read-only projection of stored history; it preserves source kind, provenance, unknown reasons, warnings, assumptions, and the paper/live evidence boundary.
 
 ## Explicitly out of scope for v0.x
 
@@ -151,12 +171,13 @@ These are the vault's current planning decisions and invariants, not new feature
 - Claims that a paper fill is equivalent to a live fill.
 - Autonomous strategy deployment, unattended capital allocation, a general-purpose prediction model, or a promise of positive returns.
 - Undocumented/private endpoint scraping where an official public interface is available.
-- A read-only dashboard/alert layer or specialized sports/game-state simulation before the stated gates and decisions are satisfied.
+- A live-provider dashboard/alert layer, order controls, or any UI that creates, edits, cancels, signs, submits, redeems, or moves funds. The local stored-history GUI is limited to Phase 5.
 
 ## Source map
 
 - Requirements and priorities: [Requirements](obsidian/03_Requirements/Requirements.md), [Constraints](obsidian/03_Requirements/Constraints.md)
 - Design baseline: [System Overview](obsidian/04_Design/System_Overview.md), [Project Map](obsidian/00_Home/Project_Map.md)
+- GUI design: [Trade-history GUI](obsidian/04_Design/Trade_History_GUI.md)
 - Execution order: [Roadmap](obsidian/06_Execution/Roadmap.md), [Next Actions](obsidian/06_Execution/Next_Actions.md)
 - Validation and evidence: [Acceptance Criteria](obsidian/07_Validation/Acceptance_Criteria.md), [Validation Plan](obsidian/07_Validation/Validation_Plan.md), [Success Metrics](obsidian/02_Strategy/Success_Metrics.md)
 - Scope and decisions: [Scope and Non-Goals](obsidian/02_Strategy/Scope_and_Non_Goals.md), [Decision Log](obsidian/09_Decisions/Decision_Log.md), [Locked Invariants](obsidian/09_Decisions/Locked_Invariants.md), [Open Questions](obsidian/09_Decisions/Open_Questions.md), [Rejected Ideas](obsidian/09_Decisions/Rejected_Ideas.md)
