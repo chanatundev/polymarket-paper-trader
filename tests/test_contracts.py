@@ -82,6 +82,11 @@ def test_keyset_pagination_uses_cursor_and_rejects_offset():
     assert page.next_cursor == "fixture-cursor-page-2"
     assert page.query["limit"] == 1
     assert transport.requests[0][1]["ascending"] == "true"
+    transport.responses[f"{GAMMA_BASE}/markets/keyset"] = fixture("gamma_markets_keyset_page2.json")
+    final_page = adapter.list_markets(limit=1, after_cursor=page.next_cursor)
+    assert final_page.next_cursor is None
+    assert final_page.items[0].condition_id == "0xgeneral-event-002"
+    assert transport.requests[1][1]["after_cursor"] == "fixture-cursor-page-2"
     with pytest.raises(LocalValidationError):
         adapter.list_markets(filters={"offset": 1})
 
