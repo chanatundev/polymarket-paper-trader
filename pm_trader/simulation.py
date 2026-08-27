@@ -2,14 +2,24 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 from decimal import Decimal
-from typing import Any, Iterable, Mapping
+from typing import Any
 
 from .errors import LocalValidationError
 from .ledger import AppendOnlyLedger
 from .matching import PaperMatcher
-from .models import BookSnapshot, Decision, MarketState, MatchResult, PaperOrder, SimulationConfig, SimulationReport
+from .models import (
+    BookSnapshot,
+    Decision,
+    MarketState,
+    MatchResult,
+    PaperOrder,
+    SimulationConfig,
+    SimulationReport,
+)
+from .precision import ZERO
 from .serialization import sha256_json
 from .storage import SQLiteStore
 
@@ -36,7 +46,13 @@ class SimulationResult:
         }
 
 
-def run_id_for(*, dataset_id: str | None, market: MarketState, orders: Iterable[PaperOrder], config: SimulationConfig) -> str:
+def run_id_for(
+    *,
+    dataset_id: str | None,
+    market: MarketState,
+    orders: Iterable[PaperOrder],
+    config: SimulationConfig,
+) -> str:
     # Receipt clocks and raw-provider extensions are provenance, not run
     # identity. Keep the identity stable when the same declared dataset and
     # configuration are loaded in another process.
@@ -51,7 +67,14 @@ def run_id_for(*, dataset_id: str | None, market: MarketState, orders: Iterable[
         "fees_enabled": market.fees_enabled,
         "fee_schedule": market.fee_schedule,
     }
-    return sha256_json({"dataset_id": dataset_id, "market": market_identity, "orders": list(orders), "config": config})[:24]
+    return sha256_json(
+        {
+            "dataset_id": dataset_id,
+            "market": market_identity,
+            "orders": list(orders),
+            "config": config,
+        }
+    )[:24]
 
 
 class SimulationEngine:
@@ -74,63 +97,245 @@ class SimulationEngine:
         extra_warnings: list[str] | None = None,
         data_coverage: Mapping[str, Any] | None = None,
     ) -> SimulationResult:
+        return self.run_stream(
+            market=market,
+            snapshots=(book,),
+            orders=orders,
+            config=config,
+            dataset_id=dataset_id,
+            run_id=run_id,
+            mark_prices=mark_prices,
+            extra_warnings=extra_warnings,
+            data_coverage=data_coverage,
+        )
+
+    def run_stream(
+        self,
+        *,
+        market: MarketState,
+        snapshots: Iterable[BookSnapshot],
+        orders: Iterable[PaperOrder],
+        config: SimulationConfig | None = None,
+        dataset_id: str | None = None,
+        run_id: str | None = None,
+        mark_prices: Mapping[str, Decimal] | None = None,
+        extra_warnings: list[str] | None = None,
+        data_coverage: Mapping[str, Any] | None = None,
+    ) -> SimulationResult:
         config = config or SimulationConfig()
+        snapshot_list = tuple(snapshots)
+        if not snapshot_list:
+            raise LocalValidationError("simulation requires at least one book snapshot")
         order_list = tuple(orders)
-        resolved_run_id = run_id or run_id_for(dataset_id=dataset_id, market=market, orders=order_list, config=config)
+        resolved_run_id = run_id or run_id_for(
+            dataset_id=dataset_id, market=market, orders=order_list, config=config
+        )
         if self.store.run_exists(resolved_run_id):
-            raise LocalValidationError("run identity already exists in this append-only store", details={"run_id": resolved_run_id})
-        if book.provenance is not None:
-            self.store.ensure_observation(provenance=book.provenance, raw_payload=book, normalized_payload=book)
-        self.store.create_run(run_id=resolved_run_id, dataset_id=dataset_id, created_at=book.received_at, config=config)
-        ledger = AppendOnlyLedger(self.store, run_id=resolved_run_id, starting_cash=config.starting_cash)
+            raise LocalValidationError(
+                "run identity already exists in this append-only store",
+                details={"run_id": resolved_run_id},
+            )
+        for snapshot in snapshot_list:
+            if snapshot.provenance is not None:
+                self.store.ensure_observation(
+                    provenance=snapshot.provenance,
+                    raw_payload=snapshot,
+                    normalized_payload=snapshot,
+                )
+        self.store.create_run(
+            run_id=resolved_run_id,
+            dataset_id=dataset_id,
+            created_at=snapshot_list[0].received_at,
+            config=config,
+        )
+        ledger = AppendOnlyLedger(
+            self.store, run_id=resolved_run_id, starting_cash=config.starting_cash
+        )
         matches: list[MatchResult] = []
         warnings = list(extra_warnings or [])
         try:
+            self.matcher.gate.stale_tolerance_seconds = config.stale_tolerance_seconds
             for order in order_list:
-                match = self.matcher.match_order(market, book, order, now=book.provider_timestamp)
-                if match.fills:
-                    required_cash = sum((fill.notional + (fill.fee or Decimal("0"))) for fill in match.fills if fill.side.casefold() == "buy")
-                    if required_cash > ledger.state.cash:
-                        match = MatchResult(
-                            order=order.with_status("rejected", remaining=order.effective_quantity()),
-                            fills=(),
-                            decision=Decision(status="rejected", reason_code="INSUFFICIENT_CASH", reasons=("paper cash is insufficient for the complete matched quantity",), freshness=match.decision.freshness, provenance_ids=match.decision.provenance_ids, assumptions={"paper_only": True}, checks={"required_cash": str(required_cash), "available_cash": str(ledger.state.cash)}),
-                            remaining_quantity=order.effective_quantity(),
-                        )
-                    else:
-                        try:
-                            if any(fill.side.casefold() == "sell" and ledger.state.positions.get(fill.asset_id, None) is None for fill in match.fills):
-                                raise LocalValidationError("sell fill has no paper position")
-                            for fill in match.fills:
-                                ledger.apply_fill(fill)
-                        except LocalValidationError as exc:
-                            match = MatchResult(
-                                order=order.with_status("rejected", remaining=order.effective_quantity()),
-                                fills=(),
-                                decision=Decision(status="rejected", reason_code="INSUFFICIENT_POSITION", reasons=(str(exc),), freshness=match.decision.freshness, provenance_ids=match.decision.provenance_ids, assumptions={"paper_only": True}),
-                                remaining_quantity=order.effective_quantity(),
+                effective_order = replace(
+                    order,
+                    latency_ms=config.latency_ms if order.latency_ms == 0 else order.latency_ms,
+                    queue_policy=config.queue_policy
+                    if order.queue_policy == "front_of_queue"
+                    else order.queue_policy,
+                )
+                ledger.record_order(effective_order)
+                current_order = effective_order
+                latest_match: MatchResult | None = None
+                for attempt, snapshot in enumerate(snapshot_list):
+                    if snapshot.asset_id != current_order.asset_id:
+                        continue
+                    candidate = self.matcher.match_order(
+                        market,
+                        snapshot,
+                        current_order,
+                        now=snapshot.provider_timestamp,
+                        fill_prefix=f"{current_order.order_id}:{attempt}",
+                    )
+                    latest_match = self._settle(
+                        candidate, current_order=current_order, ledger=ledger
+                    )
+                    if latest_match.fills:
+                        current_order = (
+                            replace(
+                                latest_match.order,
+                                quantity=latest_match.remaining_quantity,
+                                size=None,
+                                status="open",
                             )
-                ledger.record_order(match.order)
-                matches.append(match)
+                            if latest_match.remaining_quantity > ZERO
+                            and current_order.time_in_force.casefold() in {"gtc", "gtd"}
+                            else latest_match.order
+                        )
+                        if (
+                            latest_match.remaining_quantity > ZERO
+                            and current_order.time_in_force.casefold() in {"gtc", "gtd"}
+                        ):
+                            continue
+                    elif (
+                        latest_match.order.status == "open"
+                        and current_order.time_in_force.casefold() in {"gtc", "gtd"}
+                    ):
+                        current_order = latest_match.order
+                        continue
+                    break
+                if latest_match is None:
+                    latest_match = MatchResult(
+                        order=current_order.with_status(
+                            "rejected", remaining=current_order.effective_quantity()
+                        ),
+                        fills=(),
+                        decision=Decision(
+                            status="unknown",
+                            reason_code="NO_BOOK_FOR_ORDER",
+                            reasons=("no recorded snapshot matched the order token",),
+                            assumptions={"paper_only": True},
+                        ),
+                        remaining_quantity=current_order.effective_quantity(),
+                    )
+                ledger.record_order(latest_match.order)
+                matches.append(latest_match)
             effective_marks = dict(mark_prices or {})
             if not effective_marks:
-                best_bid = book.best_bid()
-                best_ask = book.best_ask()
+                mark_book = next(
+                    (
+                        snapshot
+                        for snapshot in reversed(snapshot_list)
+                        if snapshot.asset_id in ledger.state.positions
+                    ),
+                    snapshot_list[-1],
+                )
+                best_bid = mark_book.best_bid()
+                best_ask = mark_book.best_ask()
                 if best_bid and best_ask:
-                    effective_marks[book.asset_id] = (best_bid.price + best_ask.price) / Decimal("2")
+                    effective_marks[mark_book.asset_id] = (
+                        best_bid.price + best_ask.price
+                    ) / Decimal(2)
                     warnings.append("mark_price_derived_from_book_midpoint")
-            report = ledger.report(mark_prices=effective_marks, warnings=warnings, assumptions={"clock": config.clock, "latency_ms": config.latency_ms, "queue_policy": config.queue_policy, "seed": config.seed, "paper_only": True, "paper_pnl_is_not_live_pnl": True}, data_coverage={"dataset_id": dataset_id, "book_observations": 1, "full_depth": True, **dict(data_coverage or {})})
+            report = ledger.report(
+                mark_prices=effective_marks,
+                warnings=warnings,
+                assumptions={
+                    "clock": config.clock,
+                    "latency_ms": config.latency_ms,
+                    "queue_policy": config.queue_policy,
+                    "seed": config.seed,
+                    "paper_only": True,
+                    "paper_pnl_is_not_live_pnl": True,
+                },
+                data_coverage={
+                    "dataset_id": dataset_id,
+                    "book_observations": len(snapshot_list),
+                    "full_depth": True,
+                    **dict(data_coverage or {}),
+                },
+            )
             return SimulationResult(run_id=resolved_run_id, matches=tuple(matches), report=report)
         except Exception:
             self.store.finish_run(resolved_run_id, status="failed")
             raise
 
+    @staticmethod
+    def _settle(
+        match: MatchResult, *, current_order: PaperOrder, ledger: AppendOnlyLedger
+    ) -> MatchResult:
+        if not match.fills:
+            return match
+        required_cash = sum(
+            (fill.notional + (fill.fee or Decimal(0)))
+            for fill in match.fills
+            if fill.side.casefold() == "buy"
+        )
+        required_sell_quantity: dict[str, Decimal] = {}
+        for fill in match.fills:
+            if fill.side.casefold() == "sell":
+                required_sell_quantity[fill.asset_id] = (
+                    required_sell_quantity.get(fill.asset_id, ZERO) + fill.quantity
+                )
+        insufficient_position = any(
+            ledger.state.positions.get(asset_id, None) is None
+            or ledger.state.positions[asset_id].quantity < quantity
+            for asset_id, quantity in required_sell_quantity.items()
+        )
+        if required_cash > ledger.state.cash:
+            return MatchResult(
+                order=current_order.with_status(
+                    "rejected", remaining=current_order.effective_quantity()
+                ),
+                fills=(),
+                decision=Decision(
+                    status="rejected",
+                    reason_code="INSUFFICIENT_CASH",
+                    reasons=("paper cash is insufficient for the complete matched quantity",),
+                    freshness=match.decision.freshness,
+                    provenance_ids=match.decision.provenance_ids,
+                    assumptions={"paper_only": True},
+                    checks={
+                        "required_cash": str(required_cash),
+                        "available_cash": str(ledger.state.cash),
+                    },
+                ),
+                remaining_quantity=current_order.effective_quantity(),
+            )
+        if insufficient_position:
+            return MatchResult(
+                order=current_order.with_status(
+                    "rejected", remaining=current_order.effective_quantity()
+                ),
+                fills=(),
+                decision=Decision(
+                    status="rejected",
+                    reason_code="INSUFFICIENT_POSITION",
+                    reasons=("paper position is insufficient for the complete matched quantity",),
+                    freshness=match.decision.freshness,
+                    provenance_ids=match.decision.provenance_ids,
+                    assumptions={"paper_only": True},
+                ),
+                remaining_quantity=current_order.effective_quantity(),
+            )
+        for fill in match.fills:
+            ledger.apply_fill(fill)
+        return match
 
-def simulate_order(*, market: MarketState, book: BookSnapshot, order: PaperOrder, config: SimulationConfig | None = None, store: SQLiteStore | None = None) -> SimulationResult:
+
+def simulate_order(
+    *,
+    market: MarketState,
+    book: BookSnapshot,
+    order: PaperOrder,
+    config: SimulationConfig | None = None,
+    store: SQLiteStore | None = None,
+) -> SimulationResult:
     """Convenience one-order vertical slice using an in-memory store by default."""
     owned_store = store or SQLiteStore()
     try:
-        return SimulationEngine(owned_store).run(market=market, book=book, orders=(order,), config=config)
+        return SimulationEngine(owned_store).run(
+            market=market, book=book, orders=(order,), config=config
+        )
     finally:
         if store is None:
             owned_store.close()

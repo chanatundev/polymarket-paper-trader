@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Any, Mapping
+from typing import Any
 
 from .errors import LocalValidationError, UnknownFeeScheduleError
 from .models import Fill, LedgerEntry, LedgerKind, PaperOrder, SimulationReport
 from .precision import ZERO, decimal, quantize_money
-from .serialization import canonical_json, sha256_json
+from .serialization import sha256_json
 from .storage import SQLiteStore
 
 
@@ -63,8 +64,10 @@ class AppendOnlyLedger:
         )
 
     def record_order(self, order: PaperOrder) -> None:
-        self.state.orders.append(order)
+        if not any(existing.order_id == order.order_id for existing in self.state.orders):
+            self.state.orders.append(order)
         self.store.insert_order(self.state.run_id, order)
+        self.store.insert_order_event(self.state.run_id, order)
 
     def apply_fill(self, fill: Fill) -> None:
         if fill.fee is None:
@@ -74,11 +77,18 @@ class AppendOnlyLedger:
         fee = decimal(fill.fee, field="fill.fee")
         if quantity <= ZERO or notional < ZERO or fee < ZERO:
             raise LocalValidationError("fill quantities, notional, and fee must be non-negative")
-        sign = Decimal("1") if fill.side.casefold() == "buy" else Decimal("-1")
+        sign = Decimal(1) if fill.side.casefold() == "buy" else Decimal(-1)
         position = self.state.positions.setdefault(fill.asset_id, PositionState())
         if sign < ZERO:
             if position.quantity < quantity:
-                raise LocalValidationError("sell fill exceeds current paper position", details={"asset_id": fill.asset_id, "available": str(position.quantity), "requested": str(quantity)})
+                raise LocalValidationError(
+                    "sell fill exceeds current paper position",
+                    details={
+                        "asset_id": fill.asset_id,
+                        "available": str(position.quantity),
+                        "requested": str(quantity),
+                    },
+                )
             average_cost = position.cost_basis / position.quantity if position.quantity else ZERO
             realized = notional - (average_cost * quantity) - fee
             position.realized_pnl += realized
@@ -142,7 +152,23 @@ class AppendOnlyLedger:
         self.state.fills.append(fill)
         self.store.insert_fill(self.state.run_id, fill)
 
-    def _append(self, *, kind: str, asset_id: str | None, order_id: str | None, fill_id: str | None, cash_delta: Decimal, position_delta: Decimal, notional: Decimal, fee: Decimal | None, rebate_estimate: Decimal | None, realized_pnl: Decimal | None, unrealized_pnl: Decimal | None, observation_id: str | None, assumptions: Mapping[str, Any]) -> None:
+    def _append(
+        self,
+        *,
+        kind: str,
+        asset_id: str | None,
+        order_id: str | None,
+        fill_id: str | None,
+        cash_delta: Decimal,
+        position_delta: Decimal,
+        notional: Decimal,
+        fee: Decimal | None,
+        rebate_estimate: Decimal | None,
+        realized_pnl: Decimal | None,
+        unrealized_pnl: Decimal | None,
+        observation_id: str | None,
+        assumptions: Mapping[str, Any],
+    ) -> None:
         entry = LedgerEntry(
             entry_id=f"{self.state.run_id}:{self._sequence}",
             run_id=self.state.run_id,
@@ -166,7 +192,14 @@ class AppendOnlyLedger:
         self.state.entries.append(entry)
         self.store.insert_ledger_entry(entry)
 
-    def report(self, *, mark_prices: Mapping[str, Decimal] | None = None, warnings: list[str] | None = None, assumptions: Mapping[str, Any] | None = None, data_coverage: Mapping[str, Any] | None = None) -> SimulationReport:
+    def report(
+        self,
+        *,
+        mark_prices: Mapping[str, Decimal] | None = None,
+        warnings: list[str] | None = None,
+        assumptions: Mapping[str, Any] | None = None,
+        data_coverage: Mapping[str, Any] | None = None,
+    ) -> SimulationReport:
         marks = mark_prices or {}
         unrealized = ZERO
         positions: dict[str, Decimal] = {}
@@ -185,7 +218,9 @@ class AppendOnlyLedger:
             unrealized += value - position.cost_basis
         report_warnings = list(warnings or [])
         if missing_marks:
-            report_warnings.append("unrealized_pnl_unknown_without_mark_price:" + ",".join(missing_marks))
+            report_warnings.append(
+                "unrealized_pnl_unknown_without_mark_price:" + ",".join(missing_marks)
+            )
         report_payload = {
             "run_id": self.state.run_id,
             "starting_cash": self.state.starting_cash,
