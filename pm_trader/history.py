@@ -182,7 +182,7 @@ class TradeHistoryReader:
         try:
             encoded_path = quote(str(database_path.resolve()), safe="/:\\")
             connection = sqlite3.connect(
-                f"file:{encoded_path}?mode=ro",
+                f"file:{encoded_path}?mode=ro&immutable=1",
                 uri=True,
                 check_same_thread=False,
             )

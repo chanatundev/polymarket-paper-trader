@@ -179,6 +179,8 @@ def test_reader_is_sqlite_read_only_and_missing_store_does_not_get_created(
     reader.list_history()
     reader.close()
     assert database_path.read_bytes() == before
+    assert not Path(str(database_path) + "-shm").exists()
+    assert not Path(str(database_path) + "-wal").exists()
 
     missing_dir = tmp_path / "missing-data"
     missing_reader = TradeHistoryReader.open(missing_dir)
