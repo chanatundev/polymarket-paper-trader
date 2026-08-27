@@ -257,6 +257,7 @@ class GammaAdapter(_Adapter):
 
     def __init__(
         self,
+        db: Any | None = None,
         *,
         transport: JsonTransport | None = None,
         base_url: str = GAMMA_BASE,
@@ -673,6 +674,7 @@ class PolymarketClient:
 
     def __init__(
         self,
+        db: Any | None = None,
         *,
         transport: JsonTransport | None = None,
         limits: ResourceLimits | None = None,
@@ -680,10 +682,22 @@ class PolymarketClient:
         clob_base: str = CLOB_BASE,
         clock: callable | None = None,
     ) -> None:
+        del db  # retained for callers of the original read-only client facade
         self.gamma = GammaAdapter(
             transport=transport, base_url=gamma_base, limits=limits, clock=clock
         )
         self.clob = CLOBAdapter(transport=transport, base_url=clob_base, limits=limits, clock=clock)
+
+    def close(self) -> None:
+        """Compatibility no-op; the public GET transport owns no session."""
+
+    def get_midpoint(self, token_id: str) -> float:
+        book = self.get_order_book(token_id)
+        bid = book.best_bid()
+        ask = book.best_ask()
+        if bid is None or ask is None:
+            return 0.0
+        return float((bid.price + ask.price) / 2)
 
     def list_markets(self, *, limit: int = 20, sort_by: str = "volume") -> list[MarketState]:
         filters = (

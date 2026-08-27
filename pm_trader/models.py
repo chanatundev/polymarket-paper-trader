@@ -8,7 +8,20 @@ from decimal import Decimal
 from enum import Enum
 from typing import Any
 
-from .errors import LocalValidationError
+from .errors import (
+    AmbiguousResolutionError,
+    ApiError,
+    InsufficientBalanceError,
+    InvalidOutcomeError,
+    LocalValidationError,
+    MarketClosedError,
+    MarketNotFoundError,
+    NoPositionError,
+    NotInitializedError,
+    OrderRejectedError,
+    SimError,
+    TickSizeViolationError,
+)
 from .precision import decimal
 
 
@@ -569,3 +582,142 @@ class Market:
             if outcome.casefold() == "no" and index < len(self.outcome_prices):
                 return self.outcome_prices[index]
         return 0.0
+
+
+@dataclass
+class FillResult:
+    """Compatibility result returned by :mod:`pm_trader.orderbook`."""
+
+    filled: bool
+    avg_price: float
+    total_cost: float
+    total_shares: float
+    fee: float
+    slippage_bps: float
+    levels_filled: int
+    is_partial: bool
+    fills: list[Any] = field(default_factory=list)
+
+
+@dataclass
+class Trade:
+    """Compatibility trade record for the original paper account surface."""
+
+    id: int
+    market_condition_id: str
+    market_slug: str
+    market_question: str
+    outcome: str
+    side: str
+    order_type: str
+    avg_price: float
+    amount_usd: float
+    shares: float
+    fee_rate_bps: int
+    fee: float
+    slippage: float
+    levels_filled: int
+    is_partial: bool
+    created_at: str
+
+
+@dataclass
+class Position:
+    """Compatibility position record with pure valuation helpers."""
+
+    market_condition_id: str
+    market_slug: str
+    market_question: str
+    outcome: str
+    shares: float
+    avg_entry_price: float
+    total_cost: float
+    realized_pnl: float
+    is_resolved: bool
+    resolved_at: str | None = None
+
+    def current_price(self, live_price: float) -> float:
+        return live_price
+
+    def current_value(self, live_price: float) -> float:
+        return self.shares * live_price
+
+    def unrealized_pnl(self, live_price: float) -> float:
+        return self.current_value(live_price) - self.total_cost
+
+    def percent_pnl(self, live_price: float) -> float:
+        if self.total_cost == 0:
+            return 0.0
+        return self.unrealized_pnl(live_price) / self.total_cost * 100
+
+
+@dataclass
+class Account:
+    """Compatibility paper account record."""
+
+    id: int
+    starting_balance: float
+    cash: float
+    created_at: str
+
+
+@dataclass
+class TradeResult:
+    trade: Trade
+    account: Account
+
+
+@dataclass
+class ResolveResult:
+    position: Position
+    payout: float
+    account: Account
+
+
+__all__ = [
+    "Account",
+    "AmbiguousResolutionError",
+    "ApiError",
+    "BookLevel",
+    "BookSnapshot",
+    "Decision",
+    "FeeResult",
+    "FeeSchedule",
+    "Fill",
+    "FillResult",
+    "Freshness",
+    "GateStatus",
+    "InsufficientBalanceError",
+    "InvalidOutcomeError",
+    "LedgerEntry",
+    "LedgerKind",
+    "LocalValidationError",
+    "MakerTaker",
+    "Market",
+    "MarketClosedError",
+    "MarketNotFoundError",
+    "MarketState",
+    "MarketToken",
+    "MatchResult",
+    "NoPositionError",
+    "NotInitializedError",
+    "OrderBook",
+    "OrderBookLevel",
+    "OrderRejectedError",
+    "OrderStatus",
+    "PaperOrder",
+    "Position",
+    "PricePoint",
+    "Provenance",
+    "RebateEstimate",
+    "ResolveResult",
+    "Side",
+    "SimError",
+    "SimulationConfig",
+    "SimulationReport",
+    "TickSizeViolationError",
+    "TimeInForce",
+    "Trade",
+    "TradeResult",
+    "UnknownValue",
+]
