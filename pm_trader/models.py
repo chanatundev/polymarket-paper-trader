@@ -521,6 +521,7 @@ class SimulationReport:
     assumptions: Mapping[str, Any]
     data_coverage: Mapping[str, Any]
     checksum: str
+    uncertainty: Mapping[str, Any] = field(default_factory=dict)
 
 
 # Backward-compatible small records from the original package shape. They are

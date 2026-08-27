@@ -221,6 +221,18 @@ class AppendOnlyLedger:
             report_warnings.append(
                 "unrealized_pnl_unknown_without_mark_price:" + ",".join(missing_marks)
             )
+        uncertainty = {
+            "paper_fills": "model_output",
+            "provider_state": "point_in_time_observation",
+            "rebates": "estimate_not_cash",
+            "unrealized_pnl": (
+                "unknown_without_mark"
+                if missing_marks
+                else "derived_from_declared_marks"
+                if positions
+                else "not_applicable"
+            ),
+        }
         report_payload = {
             "run_id": self.state.run_id,
             "starting_cash": self.state.starting_cash,
@@ -236,6 +248,7 @@ class AppendOnlyLedger:
             "warnings": report_warnings,
             "assumptions": {"paper_only": True, **dict(assumptions or {})},
             "data_coverage": dict(data_coverage or {}),
+            "uncertainty": uncertainty,
         }
         checksum = sha256_json(report_payload)
         report = SimulationReport(
@@ -254,6 +267,7 @@ class AppendOnlyLedger:
             assumptions={"paper_only": True, **dict(assumptions or {})},
             data_coverage=dict(data_coverage or {}),
             checksum=checksum,
+            uncertainty=uncertainty,
         )
         self.store.save_report(self.state.run_id, checksum, report_payload)
         self.store.finish_run(self.state.run_id)

@@ -30,6 +30,7 @@ def test_cli_simulation_is_structured_and_paper_only(tmp_path: Path):
     assert code == 0
     assert payload["ok"] is True
     assert payload["result"]["report"]["assumptions"]["paper_only"] is True
+    assert payload["result"]["report"]["uncertainty"]["paper_fills"] == "model_output"
     assert payload["result"]["report"]["cash"] == "9973.00367"
     assert payload["errors"] == []
 
@@ -62,6 +63,12 @@ def test_mcp_tools_list_and_explain():
     text = explained["result"]["content"][0]["text"]
     payload = json.loads(text)
     assert payload["result"]["reason_code"] == "STALE_BOOK"
+
+
+def test_mcp_rejects_non_object_requests_and_params():
+    assert handle_request([])["error"]["code"] == -32600
+    response = handle_request({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": []})
+    assert response["error"]["code"] == -32602
 
 
 def test_cli_market_alias_and_mcp_portfolio_report(tmp_path: Path):
@@ -99,3 +106,16 @@ def test_cli_market_alias_and_mcp_portfolio_report(tmp_path: Path):
     report = dispatch_tool("portfolio_report", {"run_id": run_id, "data_dir": str(data_dir)})
     assert report["ok"] is True
     assert report["result"]["checksum"] == simulated["result"]["report"]["checksum"]
+
+
+def test_safety_command_reports_no_live_capabilities(tmp_path: Path):
+    code, payload = run(["--data-dir", str(tmp_path / "safety-db"), "safety"])
+    assert code == 0
+    assert payload["result"] == {
+        "mode": "paper_only",
+        "live_writes": False,
+        "signing": False,
+        "cancellation": False,
+        "redemption": False,
+        "fund_movement": False,
+    }

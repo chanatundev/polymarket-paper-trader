@@ -192,8 +192,14 @@ def dispatch_tool(
 
 
 def handle_request(
-    request: Mapping[str, Any], *, service: ResearchService | None = None
+    request: Mapping[str, Any] | Any, *, service: ResearchService | None = None
 ) -> dict[str, Any]:
+    if not isinstance(request, Mapping):
+        return {
+            "jsonrpc": "2.0",
+            "id": None,
+            "error": {"code": -32600, "message": "request must be a JSON object"},
+        }
     method = request.get("method")
     request_id = request.get("id")
     if method == "initialize":
@@ -208,14 +214,25 @@ def handle_request(
         result = {"tools": TOOL_DEFINITIONS}
     elif method == "tools/call":
         params = request.get("params", {})
+        if not isinstance(params, Mapping):
+            return {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "error": {"code": -32602, "message": "params must be an object"},
+            }
         name = params.get("name")
+        arguments = params.get("arguments", {})
+        if not isinstance(arguments, Mapping):
+            return {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "error": {"code": -32602, "message": "arguments must be an object"},
+            }
         result = {
             "content": [
                 {
                     "type": "text",
-                    "text": canonical_json(
-                        dispatch_tool(str(name), params.get("arguments", {}), service=service)
-                    ),
+                    "text": canonical_json(dispatch_tool(str(name), arguments, service=service)),
                 }
             ]
         }

@@ -51,6 +51,15 @@ def test_gtc_unfilled_is_open_with_price_reason(market, book):
     assert result.decision.reason_code == "PRICE_NOT_CROSSED"
 
 
+def test_open_order_can_be_cancelled_without_live_side_effects(market):
+    pending = order(market, tif="gtc", price="0.60", size="10", status="open")
+    result = PaperMatcher.cancel_order(pending, reason="test_cancel")
+    assert result.order.status == "cancelled"
+    assert result.remaining_quantity == Decimal(10)
+    assert result.decision.reason_code == "CANCELLED"
+    assert result.decision.assumptions["paper_only"] is True
+
+
 def test_post_only_crossing_order_is_rejected(market, book):
     result = PaperMatcher().match_order(
         market, book, order(market, tif="gtc", price="0.67", size="10", post_only=True)

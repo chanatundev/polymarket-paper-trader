@@ -104,7 +104,11 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _fixture_page(path: Path, *, search: bool = False, query: str = "") -> dict[str, Any]:
+def _fixture_page(
+    path: Path, *, search: bool = False, query: str = "", limit: int = 20
+) -> dict[str, Any]:
+    if limit < 1 or limit > ResourceLimits().max_page_size:
+        raise ValueError(f"limit is outside the configured page-size bound: {limit}")
     raw = json.loads(path.read_text(encoding="utf-8"))
     provenance = make_provenance(
         source="fixture", endpoint=str(path), raw=raw, schema_version="fixture-v1"
@@ -121,7 +125,7 @@ def _fixture_page(path: Path, *, search: bool = False, query: str = "") -> dict[
         return envelope(
             result={
                 "query": query,
-                "markets": normalized,
+                "markets": normalized[:limit],
                 "events": events,
                 "tags": raw.get("tags", []),
                 "pagination": raw.get("pagination", {}),
@@ -136,7 +140,7 @@ def _fixture_page(path: Path, *, search: bool = False, query: str = "") -> dict[
     ]
     return envelope(
         result={
-            "markets": normalized,
+            "markets": normalized[:limit],
             "next_cursor": raw.get("next_cursor") if isinstance(raw, dict) else None,
             "response_metadata": {"fixture": str(path)},
         },
@@ -181,7 +185,7 @@ def run(argv: list[str] | None = None) -> tuple[int, dict[str, Any]]:
         if args.command == "discover":
             if args.fixture:
                 return 0, _fixture_page(
-                    args.fixture, search=bool(args.query), query=args.query or ""
+                    args.fixture, search=bool(args.query), query=args.query or "", limit=args.limit
                 )
             return 0, ResearchService(store, limits=ResourceLimits()).discover(
                 query=args.query, limit=args.limit, cursor=args.cursor
@@ -189,11 +193,13 @@ def run(argv: list[str] | None = None) -> tuple[int, dict[str, Any]]:
         if args.command in {"market", "markets"}:
             if args.market_command == "list":
                 if args.fixture:
-                    return 0, _fixture_page(args.fixture)
+                    return 0, _fixture_page(args.fixture, limit=args.limit)
                 return 0, ResearchService(store).discover(limit=args.limit)
             if args.market_command == "search":
                 if args.fixture:
-                    return 0, _fixture_page(args.fixture, search=True, query=args.query)
+                    return 0, _fixture_page(
+                        args.fixture, search=True, query=args.query, limit=args.limit
+                    )
                 return 0, ResearchService(store).discover(query=args.query, limit=args.limit)
             market = (
                 load_market_fixture(args.fixture)

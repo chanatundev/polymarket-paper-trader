@@ -77,6 +77,41 @@ def _rejected(
     )
 
 
+def cancel_order(order: PaperOrder, *, reason: str = "user_requested") -> MatchResult:
+    """Cancel the remaining quantity of a paper order without a live action."""
+
+    quantity = order.effective_quantity()
+    terminal = {
+        OrderStatus.CANCELLED.value,
+        OrderStatus.EXPIRED.value,
+        OrderStatus.FILLED.value,
+        OrderStatus.REJECTED.value,
+    }
+    if order.status in terminal:
+        return MatchResult(
+            order=order,
+            fills=(),
+            decision=Decision(
+                status="rejected",
+                reason_code="CANCEL_NOT_ALLOWED",
+                reasons=(f"order is already terminal: {order.status}",),
+                assumptions={"paper_only": True, "cancel_reason": reason},
+            ),
+            remaining_quantity=quantity,
+        )
+    return MatchResult(
+        order=order.with_status(OrderStatus.CANCELLED.value, remaining=quantity),
+        fills=(),
+        decision=Decision(
+            status="rejected",
+            reason_code="CANCELLED",
+            reasons=("remaining paper quantity was cancelled",),
+            assumptions={"paper_only": True, "cancel_reason": reason},
+        ),
+        remaining_quantity=quantity,
+    )
+
+
 class PaperMatcher:
     """Match paper orders against a declared canonical book snapshot."""
 
@@ -490,3 +525,7 @@ class PaperMatcher:
         return self.match_order(
             market, book, order, now=now, fill_prefix=fill_prefix, allow_resting_post_only_fill=True
         )
+
+    @staticmethod
+    def cancel_order(order: PaperOrder, *, reason: str = "user_requested") -> MatchResult:
+        return cancel_order(order, reason=reason)
