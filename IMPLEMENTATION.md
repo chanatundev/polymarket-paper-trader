@@ -14,7 +14,7 @@ This is the implementation TODO list for the planning vault in this project. It 
 - Keep an item unchecked until its stated evidence exists.
 - Link completed items to tests, fixtures, reports, checksums, or human-review records. A passing source-repository test is evidence about that source revision only; it is not evidence of current provider compatibility.
 - Keep unknowns, assumptions, provider incompatibilities, and human gates visible. Do not replace them with zero/default values or silently choose an open-question answer.
-- Treat the `P0`/`P1` priorities in [Requirements](03_Requirements/Requirements.md) as the priority order. The phase order below follows [Roadmap](06_Execution/Roadmap.md) and is sequencing guidance, not additional scope.
+- Treat the `P0`/`P1` priorities in [Requirements](obsidian/03_Requirements/Requirements.md) as the priority order. The phase order below follows [Roadmap](obsidian/06_Execution/Roadmap.md) and is sequencing guidance, not additional scope.
 - Do not update canonical vault logs unless explicitly requested; record implementation evidence in the implementation repository and link it from this checklist as appropriate.
 
 ## Current baseline
@@ -33,7 +33,7 @@ Complete this phase before changing provider adapters or building the matcher.
 - [x] Record current-versus-legacy compatibility decisions for routes, pagination, payload fields, fee-rate shapes, and other intentional source behavior. (evidence: `pm_trader/api.py::GammaAdapter`, `pm_trader/api.py::CLOBAdapter`, `tests/test_contracts.py::test_keyset_pagination_uses_cursor_and_rejects_offset`) (Roadmap; Decision D-004; NFR-006)
 - [x] Write compatibility, malformed-payload, route, and rate-limit tests before adapter changes so each failure identifies one field, route, or semantic mismatch. Add negative fixtures for missing and invalid fields. (evidence: `tests/test_contracts.py`) (Next Actions; Roadmap; NFR-003, NFR-006)
 - [x] Set explicit bounds for page size, history fidelity, recording duration/retention, replay size, and agent-facing response size. Keep the policy visible where long-running recording or raw-payload retention is implemented. (evidence: `pm_trader/api.py::ResourceLimits`, `pm_trader/recording.py::Recorder`, `pm_trader/mcp_server.py::main`) (Constraints; FR-011; NFR-005; Risk R-008)
-- [x] Record research dates, official source URLs, fixture versions, and the boundary between point-in-time live probes, fixtures, local tests, and human review. (evidence: `01_Research/Sources.md`, fixture `fixtureVersion` fields, `README.md`) (Sources; Constraints; Risk R-010)
+- [x] Record research dates, official source URLs, fixture versions, and the boundary between point-in-time live probes, fixtures, local tests, and human review. (evidence: `obsidian/01_Research/Sources.md`, fixture `fixtureVersion` fields, `README.md`) (Sources; Constraints; Risk R-010)
 - [ ] Review the paper-only safety boundary and the proposed schema contract before implementation proceeds. (Roadmap Phase 0; Acceptance Criteria)
 
 ## Phase 1 — Current-data adapters and normalized state
@@ -83,8 +83,8 @@ The vault's acceptance checklist remains proposed until each checked item has li
 
 ### Current-data compatibility
 
-- [x] Dated current Gamma keyset, event-by-slug, and public-search fixtures parse with pagination and provenance intact. (evidence: `fixtures/`, `01_Research/Sources.md`, `tests/test_contracts.py`; not a live compatibility claim)
-- [x] Dated current market and CLOB fields required by [Requirements](03_Requirements/Requirements.md) are preserved in canonical records. (evidence: `pm_trader/normalizers.py`, `01_Research/Sources.md`, `tests/test_contracts.py`; not a live compatibility claim)
+- [x] Dated current Gamma keyset, event-by-slug, and public-search fixtures parse with pagination and provenance intact. (evidence: `fixtures/`, `obsidian/01_Research/Sources.md`, `tests/test_contracts.py`; not a live compatibility claim)
+- [x] Dated current market and CLOB fields required by [Requirements](obsidian/03_Requirements/Requirements.md) are preserved in canonical records. (evidence: `pm_trader/normalizers.py`, `obsidian/01_Research/Sources.md`, `tests/test_contracts.py`; not a live compatibility claim)
 - [x] Route, schema, rate-limit, and malformed-payload errors are explicit and tested. (evidence: `pm_trader/api.py`, `pm_trader/errors.py`, `tests/test_contracts.py`)
 
 ### Simulation fidelity
@@ -118,7 +118,7 @@ The vault's acceptance checklist remains proposed until each checked item has li
 
 ## Decision gates — do not silently choose
 
-Resolve these in [Open Questions](09_Decisions/Open_Questions.md) or a new decision record before the related scope is expanded. Their defaults are not permission to implement additional features.
+Resolve these in [Open Questions](obsidian/09_Decisions/Open_Questions.md) or a new decision record before the related scope is expanded. Their defaults are not permission to implement additional features.
 
 - [x] **OQ-001:** Confirm the implementation checkout/source ownership if work needs the audited `/tmp` clone. This checklist is located in the user-selected project directory; do not assume the audited clone is the implementation target. (evidence: user-selected implementation path `/Users/chanatun/code/projects/polymarket-paper-trader`; audited `/tmp` source was read-only context)
 - [ ] **OQ-002:** Decide whether v0.x needs a web UI. The current default is CLI/MCP first.
@@ -155,8 +155,8 @@ These are the vault's current planning decisions and invariants, not new feature
 
 ## Source map
 
-- Requirements and priorities: [Requirements](03_Requirements/Requirements.md), [Constraints](03_Requirements/Constraints.md)
-- Design baseline: [System Overview](04_Design/System_Overview.md), [Project Map](00_Home/Project_Map.md)
-- Execution order: [Roadmap](06_Execution/Roadmap.md), [Next Actions](06_Execution/Next_Actions.md)
-- Validation and evidence: [Acceptance Criteria](07_Validation/Acceptance_Criteria.md), [Validation Plan](07_Validation/Validation_Plan.md), [Success Metrics](02_Strategy/Success_Metrics.md)
-- Scope and decisions: [Scope and Non-Goals](02_Strategy/Scope_and_Non_Goals.md), [Decision Log](09_Decisions/Decision_Log.md), [Locked Invariants](09_Decisions/Locked_Invariants.md), [Open Questions](09_Decisions/Open_Questions.md), [Rejected Ideas](09_Decisions/Rejected_Ideas.md)
+- Requirements and priorities: [Requirements](obsidian/03_Requirements/Requirements.md), [Constraints](obsidian/03_Requirements/Constraints.md)
+- Design baseline: [System Overview](obsidian/04_Design/System_Overview.md), [Project Map](obsidian/00_Home/Project_Map.md)
+- Execution order: [Roadmap](obsidian/06_Execution/Roadmap.md), [Next Actions](obsidian/06_Execution/Next_Actions.md)
+- Validation and evidence: [Acceptance Criteria](obsidian/07_Validation/Acceptance_Criteria.md), [Validation Plan](obsidian/07_Validation/Validation_Plan.md), [Success Metrics](obsidian/02_Strategy/Success_Metrics.md)
+- Scope and decisions: [Scope and Non-Goals](obsidian/02_Strategy/Scope_and_Non_Goals.md), [Decision Log](obsidian/09_Decisions/Decision_Log.md), [Locked Invariants](obsidian/09_Decisions/Locked_Invariants.md), [Open Questions](obsidian/09_Decisions/Open_Questions.md), [Rejected Ideas](obsidian/09_Decisions/Rejected_Ideas.md)
