@@ -133,11 +133,33 @@ class Recorder:
         for update in updates:
             event = getattr(update, "event", update)
             snapshot = getattr(update, "snapshot", None)
+            event_type = getattr(event, "event_type", "")
+            if (
+                snapshot is not None
+                and event_type in {"book", "authoritative_resync"}
+                and getattr(snapshot, "provenance", None) is not None
+                and getattr(event, "provenance", None) is not None
+                and snapshot.provenance.observation_id == event.provenance.observation_id
+            ):
+                observation_provenance = self.record_book(
+                    snapshot, raw_payload=getattr(event, "payload", snapshot)
+                )
+                self.store.insert_stream_event(
+                    dataset_id=self.dataset_id,
+                    observation_id=observation_provenance.observation_id,
+                    event_type=event_type,
+                    sequence=getattr(event, "sequence", None),
+                    gap_detected=bool(getattr(event, "gap_detected", False)),
+                    resynchronized=bool(getattr(event, "resynchronized", False)),
+                    payload=getattr(event, "payload", {}),
+                )
+                recorded.append(observation_provenance)
+                continue
             event_provenance = self.record_event(event)
             recorded.append(event_provenance)
             if snapshot is None:
                 continue
-            if getattr(event, "event_type", "") in {"book", "authoritative_resync"}:
+            if event_type in {"book", "authoritative_resync"}:
                 if (
                     snapshot.provenance is not None
                     and snapshot.provenance.observation_id == event_provenance.observation_id
@@ -244,6 +266,13 @@ def load_book_dataset(
                     endpoint=str(source),
                     details={"line": index + 1},
                 ) from exc
+            if not isinstance(record, Mapping):
+                raise MalformedPayloadError(
+                    "dataset record must be a JSON object",
+                    provider="dataset",
+                    endpoint=str(source),
+                    details={"line": index + 1},
+                )
             lines.append(record)
             if record.get("kind") != "book":
                 continue
@@ -295,6 +324,13 @@ def load_stream_metadata(path: str | Path, *, max_events: int = 100_000) -> dict
                     endpoint=str(source),
                     details={"line": index + 1},
                 ) from exc
+            if not isinstance(record, Mapping):
+                raise MalformedPayloadError(
+                    "dataset record must be a JSON object",
+                    provider="dataset",
+                    endpoint=str(source),
+                    details={"line": index + 1},
+                )
             if record.get("kind") != "event":
                 continue
             event_count += 1

@@ -5,32 +5,48 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sqlite3
 import sys
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
-from .api import CLOBAdapter, FixtureTransport, GammaAdapter, ResourceLimits
+from .api import ResourceLimits
 from .errors import TraderError
 from .models import PaperOrder, SimulationConfig
-from .normalizers import make_provenance, normalize_book, normalize_market
-from .serialization import canonical_json
+from .normalizers import make_provenance, normalize_market
+from .serialization import bounded_json, canonical_json
 from .storage import SQLiteStore
-from .workflows import ResearchService, as_jsonable, envelope, load_book_fixture, load_market_fixture
+from .workflows import (
+    ResearchService,
+    envelope,
+    load_book_fixture,
+    load_market_fixture,
+)
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="pm-trader", description="Paper-only Polymarket research and replay workbench")
-    parser.add_argument("--data-dir", default=os.environ.get("PM_TRADER_DATA_DIR", ".pm-trader"), help="SQLite data directory")
+    parser = argparse.ArgumentParser(
+        prog="pm-trader", description="Paper-only Polymarket research and replay workbench"
+    )
+    parser.add_argument(
+        "--data-dir",
+        default=os.environ.get("PM_TRADER_DATA_DIR", ".pm-trader"),
+        help="SQLite data directory",
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    discover = sub.add_parser("discover", help="discover markets through keyset pagination or public search")
+    discover = sub.add_parser(
+        "discover", help="discover markets through keyset pagination or public search"
+    )
     discover.add_argument("--query")
     discover.add_argument("--limit", type=int, default=20)
     discover.add_argument("--cursor")
     discover.add_argument("--fixture", type=Path)
 
-    market = sub.add_parser("market", help="market discovery and inspection aliases")
+    market = sub.add_parser(
+        "market", aliases=["markets"], help="market discovery and inspection aliases"
+    )
     market_sub = market.add_subparsers(dest="market_command", required=True)
     market_list = market_sub.add_parser("list")
     market_list.add_argument("--limit", type=int, default=20)
@@ -55,11 +71,12 @@ def _parser() -> argparse.ArgumentParser:
     simulate.add_argument("--book-fixture", type=Path, required=True)
     simulate.add_argument("--order-id", default="cli-order-1")
     simulate.add_argument("--side", choices=("buy", "sell"), default="buy")
+    simulate.add_argument("--outcome", default="Yes")
     simulate.add_argument("--price", type=Decimal, default=Decimal("0.66"))
-    simulate.add_argument("--size", type=Decimal, default=Decimal("10"))
+    simulate.add_argument("--size", type=Decimal, default=Decimal(10))
     simulate.add_argument("--tif", choices=("gtc", "gtd", "fak", "fok"), default="fok")
     simulate.add_argument("--post-only", action="store_true")
-    simulate.add_argument("--starting-cash", type=Decimal, default=Decimal("10000"))
+    simulate.add_argument("--starting-cash", type=Decimal, default=Decimal(10000))
     simulate.add_argument("--latency-ms", type=int, default=0)
     simulate.add_argument("--dataset-id")
 
@@ -68,10 +85,11 @@ def _parser() -> argparse.ArgumentParser:
     replay.add_argument("--market-fixture", type=Path, required=True)
     replay.add_argument("--order-id", default="replay-order-1")
     replay.add_argument("--side", choices=("buy", "sell"), default="buy")
+    replay.add_argument("--outcome", default="Yes")
     replay.add_argument("--price", type=Decimal, default=Decimal("0.66"))
-    replay.add_argument("--size", type=Decimal, default=Decimal("10"))
+    replay.add_argument("--size", type=Decimal, default=Decimal(10))
     replay.add_argument("--tif", choices=("gtc", "gtd", "fak", "fok"), default="fok")
-    replay.add_argument("--starting-cash", type=Decimal, default=Decimal("10000"))
+    replay.add_argument("--starting-cash", type=Decimal, default=Decimal(10000))
 
     report = sub.add_parser("report", help="read a stored simulation report")
     report.add_argument("--run-id", required=True)
@@ -88,24 +106,60 @@ def _parser() -> argparse.ArgumentParser:
 
 def _fixture_page(path: Path, *, search: bool = False, query: str = "") -> dict[str, Any]:
     raw = json.loads(path.read_text(encoding="utf-8"))
-    provenance = make_provenance(source="fixture", endpoint=str(path), raw=raw, schema_version="fixture-v1")
+    provenance = make_provenance(
+        source="fixture", endpoint=str(path), raw=raw, schema_version="fixture-v1"
+    )
     if search:
         events = raw.get("events", []) if isinstance(raw, dict) else []
         markets = []
         for event in events:
             markets.extend(event.get("markets", []) if isinstance(event, dict) else [])
-        normalized = [normalize_market(item, provenance=provenance, endpoint=str(path), provider="fixture") for item in markets]
-        return envelope(result={"query": query, "markets": normalized, "events": events, "tags": raw.get("tags", []), "pagination": raw.get("pagination", {})}, provenance_ids=(provenance.observation_id,), assumptions={"provider": "fixture", "route": "/public-search"})
+        normalized = [
+            normalize_market(item, provenance=provenance, endpoint=str(path), provider="fixture")
+            for item in markets
+        ]
+        return envelope(
+            result={
+                "query": query,
+                "markets": normalized,
+                "events": events,
+                "tags": raw.get("tags", []),
+                "pagination": raw.get("pagination", {}),
+            },
+            provenance_ids=(provenance.observation_id,),
+            assumptions={"provider": "fixture", "route": "/public-search"},
+        )
     market_payloads = raw.get("markets", []) if isinstance(raw, dict) else raw
-    normalized = [normalize_market(item, provenance=provenance, endpoint=str(path), provider="fixture") for item in market_payloads]
-    return envelope(result={"markets": normalized, "next_cursor": raw.get("next_cursor") if isinstance(raw, dict) else None, "response_metadata": {"fixture": str(path)}}, provenance_ids=(provenance.observation_id,), assumptions={"provider": "fixture", "route": "/markets/keyset"})
+    normalized = [
+        normalize_market(item, provenance=provenance, endpoint=str(path), provider="fixture")
+        for item in market_payloads
+    ]
+    return envelope(
+        result={
+            "markets": normalized,
+            "next_cursor": raw.get("next_cursor") if isinstance(raw, dict) else None,
+            "response_metadata": {"fixture": str(path)},
+        },
+        provenance_ids=(provenance.observation_id,),
+        assumptions={"provider": "fixture", "route": "/markets/keyset"},
+    )
 
 
 def _order(args: argparse.Namespace, market: Any) -> PaperOrder:
-    token = market.tokens[0]
-    if args.side == "sell":
-        token = market.token_for("Yes")
-    return PaperOrder(order_id=args.order_id, market_id=market.condition_id, asset_id=token.token_id, side=args.side, price=args.price, quantity=args.size, time_in_force=getattr(args, "tif", "fok"), post_only=getattr(args, "post_only", False), latency_ms=getattr(args, "latency_ms", 0), queue_policy="front_of_queue", model_version="matcher-v1")
+    token = market.token_for(getattr(args, "outcome", "Yes"))
+    return PaperOrder(
+        order_id=args.order_id,
+        market_id=market.condition_id,
+        asset_id=token.token_id,
+        side=args.side,
+        price=args.price,
+        quantity=args.size,
+        time_in_force=getattr(args, "tif", "fok"),
+        post_only=getattr(args, "post_only", False),
+        latency_ms=getattr(args, "latency_ms", 0),
+        queue_policy="front_of_queue",
+        model_version="matcher-v1",
+    )
 
 
 def run(argv: list[str] | None = None) -> tuple[int, dict[str, Any]]:
@@ -113,12 +167,26 @@ def run(argv: list[str] | None = None) -> tuple[int, dict[str, Any]]:
     store = SQLiteStore(args.data_dir)
     try:
         if args.command == "safety":
-            return 0, envelope(result={"mode": "paper_only", "live_writes": False, "signing": False, "cancellation": False, "redemption": False, "fund_movement": False}, assumptions={"authenticated_execution": "out_of_scope"})
+            return 0, envelope(
+                result={
+                    "mode": "paper_only",
+                    "live_writes": False,
+                    "signing": False,
+                    "cancellation": False,
+                    "redemption": False,
+                    "fund_movement": False,
+                },
+                assumptions={"authenticated_execution": "out_of_scope"},
+            )
         if args.command == "discover":
             if args.fixture:
-                return 0, _fixture_page(args.fixture, search=bool(args.query), query=args.query or "")
-            return 0, ResearchService(store, limits=ResourceLimits()).discover(query=args.query, limit=args.limit, cursor=args.cursor)
-        if args.command == "market":
+                return 0, _fixture_page(
+                    args.fixture, search=bool(args.query), query=args.query or ""
+                )
+            return 0, ResearchService(store, limits=ResourceLimits()).discover(
+                query=args.query, limit=args.limit, cursor=args.cursor
+            )
+        if args.command in {"market", "markets"}:
             if args.market_command == "list":
                 if args.fixture:
                     return 0, _fixture_page(args.fixture)
@@ -127,42 +195,98 @@ def run(argv: list[str] | None = None) -> tuple[int, dict[str, Any]]:
                 if args.fixture:
                     return 0, _fixture_page(args.fixture, search=True, query=args.query)
                 return 0, ResearchService(store).discover(query=args.query, limit=args.limit)
-            market = load_market_fixture(args.fixture) if args.fixture else ResearchService(store)._market(args.identifier)
-            return 0, envelope(result=market, freshness=market.freshness.value, provenance_ids=(market.provenance.observation_id,) if market.provenance else ())
+            market = (
+                load_market_fixture(args.fixture)
+                if args.fixture
+                else ResearchService(store)._market(args.identifier)
+            )
+            return 0, envelope(
+                result=market,
+                freshness=market.freshness.value,
+                provenance_ids=(market.provenance.observation_id,) if market.provenance else (),
+            )
         if args.command == "inspect":
             if args.inspect_command == "market":
                 market = load_market_fixture(args.fixture)
-                return 0, envelope(result=market, freshness=market.freshness.value, provenance_ids=(market.provenance.observation_id,) if market.provenance else ())
+                return 0, envelope(
+                    result=market,
+                    freshness=market.freshness.value,
+                    provenance_ids=(market.provenance.observation_id,) if market.provenance else (),
+                )
             book = load_book_fixture(args.fixture)
-            return 0, envelope(result=book, freshness=book.freshness.value, provenance_ids=(book.provenance.observation_id,) if book.provenance else ())
+            return 0, envelope(
+                result=book,
+                freshness=book.freshness.value,
+                provenance_ids=(book.provenance.observation_id,) if book.provenance else (),
+            )
         if args.command == "simulate":
             market = load_market_fixture(args.market_fixture)
             book = load_book_fixture(args.book_fixture)
             order = _order(args, market)
             config = SimulationConfig(starting_cash=args.starting_cash, latency_ms=args.latency_ms)
-            return 0, ResearchService(store).simulate(market=market, book=book, orders=(order,), config=config, dataset_id=args.dataset_id)
+            return 0, ResearchService(store).simulate(
+                market=market, book=book, orders=(order,), config=config, dataset_id=args.dataset_id
+            )
         if args.command == "replay":
             market = load_market_fixture(args.market_fixture)
             order = _order(args, market)
             config = SimulationConfig(starting_cash=args.starting_cash)
-            return 0, ResearchService(store).replay(dataset_path=args.dataset, market=market, orders=(order,), config=config)
+            return 0, ResearchService(store).replay(
+                dataset_path=args.dataset, market=market, orders=(order,), config=config
+            )
         if args.command == "report":
             report = store.get_report(args.run_id)
             if report is None:
-                return 1, envelope(result=None, errors=({"code": "REPORT_NOT_FOUND", "message": args.run_id},), ok=False)
-            return 0, envelope(result=report, freshness="unknown", assumptions={"paper_pnl_is_not_live_pnl": True})
+                return 1, envelope(
+                    result=None,
+                    errors=({"code": "REPORT_NOT_FOUND", "message": args.run_id},),
+                    ok=False,
+                )
+            return 0, envelope(
+                result=report, freshness="unknown", assumptions={"paper_pnl_is_not_live_pnl": True}
+            )
         if args.command == "explain":
-            return 0, envelope(result={"status": args.status, "reason_code": args.reason_code, "reasons": args.reason, "freshness": args.freshness}, freshness=args.freshness)
-        return 1, envelope(result=None, errors=({"code": "UNKNOWN_COMMAND", "message": args.command},), ok=False)
+            return 0, envelope(
+                result={
+                    "status": args.status,
+                    "reason_code": args.reason_code,
+                    "reasons": args.reason,
+                    "freshness": args.freshness,
+                },
+                freshness=args.freshness,
+            )
+        return 1, envelope(
+            result=None, errors=({"code": "UNKNOWN_COMMAND", "message": args.command},), ok=False
+        )
     except TraderError as exc:
         return 2, envelope(result=None, errors=(exc.to_dict(),), ok=False)
-    except Exception as exc:  # Keep the agent-facing surface structured even for programming/config errors.
-        return 2, envelope(result=None, errors=({"code": "UNEXPECTED_ERROR", "category": "local_validation", "message": str(exc)},), ok=False)
+    except (OSError, ValueError, TypeError, KeyError, IndexError, sqlite3.Error) as exc:
+        return 2, envelope(
+            result=None,
+            errors=(
+                {"code": "UNEXPECTED_ERROR", "category": "local_validation", "message": str(exc)},
+            ),
+            ok=False,
+        )
     finally:
         store.close()
 
 
 def main(argv: list[str] | None = None) -> None:
     code, payload = run(argv)
-    sys.stdout.write(canonical_json(payload) + "\n")
+    encoded, truncated = bounded_json(payload, ResourceLimits().max_response_bytes)
+    if truncated:
+        encoded = canonical_json(
+            envelope(
+                result=None,
+                errors=(
+                    {
+                        "code": "RESPONSE_SIZE_LIMIT",
+                        "message": "response exceeded configured CLI size limit",
+                    },
+                ),
+                ok=False,
+            )
+        )
+    sys.stdout.write(encoded + "\n")
     raise SystemExit(code)
