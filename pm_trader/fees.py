@@ -9,7 +9,6 @@ from .errors import LocalValidationError
 from .models import FeeResult, FeeSchedule, MakerTaker, RebateEstimate
 from .precision import ONE, ZERO, decimal, probability, quantize_money
 
-
 FEE_ROUNDING_PLACES = 5
 
 
@@ -17,13 +16,18 @@ def _schedule_from_legacy(value: Any) -> FeeSchedule:
     bps = decimal(value, field="fee_rate_bps")
     if bps < ZERO:
         raise LocalValidationError("fee_rate_bps cannot be negative")
-    return FeeSchedule(rate=bps / Decimal("10000"), exponent=ONE, version="legacy-base-fee-bps", formula="legacy_shares_rate_price_product")
+    return FeeSchedule(
+        rate=bps / Decimal(10000),
+        exponent=ONE,
+        version="legacy-base-fee-bps",
+        formula="legacy_shares_rate_price_product",
+    )
 
 
 def calculate_fee(
-    schedule: FeeSchedule | int | float | str | None,
-    price: Decimal | int | float | str,
-    shares: Decimal | int | float | str,
+    schedule: FeeSchedule | float | str | None,
+    price: Decimal | float | str,
+    shares: Decimal | float | str,
     *,
     role: str = MakerTaker.TAKER.value,
     side: str = "buy",
@@ -54,7 +58,15 @@ def calculate_fee(
         )
     if not isinstance(schedule, FeeSchedule):
         schedule = _schedule_from_legacy(schedule)
-    if role.casefold() == MakerTaker.MAKER.value or (schedule.taker_only and role.casefold() != MakerTaker.TAKER.value):
+    if schedule.rate < ZERO or schedule.exponent < ZERO:
+        raise LocalValidationError("fee schedule rate and exponent cannot be negative")
+    if schedule.rate > ONE:
+        raise LocalValidationError("fee schedule rate cannot exceed one")
+    if role.casefold() not in {MakerTaker.MAKER.value, MakerTaker.TAKER.value}:
+        raise LocalValidationError("maker_taker role must be maker or taker")
+    if role.casefold() == MakerTaker.MAKER.value or (
+        schedule.taker_only and role.casefold() != MakerTaker.TAKER.value
+    ):
         return FeeResult(
             status="known",
             amount=ZERO,
@@ -69,7 +81,7 @@ def calculate_fee(
     if schedule.formula == "legacy_shares_rate_price_product":
         raw_amount = quantity * schedule.rate * curve
     else:
-        raw_amount = quantity * schedule.rate * (curve ** schedule.exponent)
+        raw_amount = quantity * schedule.rate * (curve**schedule.exponent)
     amount = quantize_money(raw_amount, rounding_places)
     return FeeResult(
         status="known",
@@ -83,30 +95,82 @@ def calculate_fee(
     )
 
 
-def calculate_dynamic_fee(schedule: FeeSchedule | None, price: Any, shares: Any, *, maker: bool = False, side: str = "buy") -> Decimal | None:
+def calculate_dynamic_fee(
+    schedule: FeeSchedule | None, price: Any, shares: Any, *, maker: bool = False, side: str = "buy"
+) -> Decimal | None:
     """Convenience API returning only the amount, with ``None`` for unknown."""
-    result = calculate_fee(schedule, price, shares, role=MakerTaker.MAKER.value if maker else MakerTaker.TAKER.value, side=side)
+    result = calculate_fee(
+        schedule,
+        price,
+        shares,
+        role=MakerTaker.MAKER.value if maker else MakerTaker.TAKER.value,
+        side=side,
+    )
     return result.amount
 
 
-def estimate_maker_rebate(schedule: FeeSchedule | None, *, price: Any, shares: Any, eligible: bool | None = None, coverage: str = "fixture_schedule_only") -> RebateEstimate:
+def estimate_maker_rebate(
+    schedule: FeeSchedule | None,
+    *,
+    price: Any,
+    shares: Any,
+    eligible: bool | None = None,
+    coverage: str = "fixture_schedule_only",
+) -> RebateEstimate:
     """Estimate a maker rebate without changing fee or cash accounting."""
     if schedule is None:
-        return RebateEstimate(status="unknown", amount=None, eligible=None, confidence="none", coverage=coverage, assumptions=("fee schedule unavailable",), reason="maker rebate schedule unavailable")
+        return RebateEstimate(
+            status="unknown",
+            amount=None,
+            eligible=None,
+            confidence="none",
+            coverage=coverage,
+            assumptions=("fee schedule unavailable",),
+            reason="maker rebate schedule unavailable",
+        )
     if schedule.rebate_rate is None:
-        return RebateEstimate(status="unknown", amount=None, eligible=False if eligible is None else eligible, confidence="none", coverage=coverage, assumptions=("rebate rate not provided by the fixture",), reason="rebate rate unavailable")
+        return RebateEstimate(
+            status="unknown",
+            amount=None,
+            eligible=False if eligible is None else eligible,
+            confidence="none",
+            coverage=coverage,
+            assumptions=("rebate rate not provided by the fixture",),
+            reason="rebate rate unavailable",
+        )
     if eligible is False:
-        return RebateEstimate(status="not_eligible", amount=ZERO, eligible=False, confidence="high", coverage=coverage, assumptions=("caller marked fill as not eligible",), reason="fill is not eligible for maker rebate")
+        return RebateEstimate(
+            status="not_eligible",
+            amount=ZERO,
+            eligible=False,
+            confidence="high",
+            coverage=coverage,
+            assumptions=("caller marked fill as not eligible",),
+            reason="fill is not eligible for maker rebate",
+        )
     p = probability(price)
     quantity = decimal(shares, field="shares")
     if quantity < ZERO:
         raise LocalValidationError("shares cannot be negative")
     fee_equivalent = quantity * schedule.rate * (p * (ONE - p)) ** schedule.exponent
     amount = quantize_money(fee_equivalent * schedule.rebate_rate, FEE_ROUNDING_PLACES)
-    return RebateEstimate(status="estimate", amount=amount, eligible=True if eligible is None else eligible, confidence="medium", coverage=coverage, assumptions=("provider-confirmed reward distribution is not present", "estimate is not cash", "market-level rebate pool is not observed"))
+    return RebateEstimate(
+        status="estimate",
+        amount=amount,
+        eligible=True if eligible is None else eligible,
+        confidence="medium",
+        coverage=coverage,
+        assumptions=(
+            "provider-confirmed reward distribution is not present",
+            "estimate is not cash",
+            "market-level rebate pool is not observed",
+        ),
+    )
 
 
-def calculate_platform_fee(amount_usd: Any, price: Any, fee_rate: Any, fee_exponent: Any = 1) -> Decimal:
+def calculate_platform_fee(
+    amount_usd: Any, price: Any, fee_rate: Any, fee_exponent: Any = 1
+) -> Decimal:
     """Compatibility helper matching the CLOB V2 SDK's amount convention.
 
     ``amount_usd`` is notional; it is converted to shares before applying the

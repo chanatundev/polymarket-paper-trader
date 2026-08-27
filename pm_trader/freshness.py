@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
 
-from .models import BookSnapshot, Decision, FeeSchedule, Freshness, MarketState, Provenance
+from .models import BookSnapshot, Decision, FeeSchedule, Freshness, MarketState
 from .precision import timestamp_seconds
 
 
@@ -32,7 +32,9 @@ class FreshnessStateGate:
         self.stale_tolerance_seconds = stale_tolerance_seconds
         self.clock = clock
 
-    def evaluate(self, market: MarketState | None, book: BookSnapshot | None, *, now: str | None = None) -> GateResult:
+    def evaluate(
+        self, market: MarketState | None, book: BookSnapshot | None, *, now: str | None = None
+    ) -> GateResult:
         reasons: list[str] = []
         warnings: list[str] = []
         checks: dict[str, Any] = {}
@@ -42,7 +44,16 @@ class FreshnessStateGate:
         if book and book.provenance:
             provenance_ids.append(book.provenance.observation_id)
         if market is None or book is None:
-            return GateResult(Decision(status="unknown", reason_code="UNAVAILABLE_STATE", reasons=("market or book observation is unavailable",), freshness=Freshness.UNAVAILABLE, provenance_ids=tuple(provenance_ids), checks=checks))
+            return GateResult(
+                Decision(
+                    status="unknown",
+                    reason_code="UNAVAILABLE_STATE",
+                    reasons=("market or book observation is unavailable",),
+                    freshness=Freshness.UNAVAILABLE,
+                    provenance_ids=tuple(provenance_ids),
+                    checks=checks,
+                )
+            )
 
         if market.closed is True:
             reasons.append("market_closed")
@@ -80,15 +91,25 @@ class FreshnessStateGate:
         if book.freshness in {Freshness.STALE, Freshness.UNAVAILABLE, Freshness.INCONSISTENT}:
             reasons.append(f"book_freshness_{book.freshness.value}")
 
-        effective_tick = book.tick_size or market.tick_size
-        effective_min = book.min_order_size or market.min_order_size
+        effective_tick = book.tick_size if book.tick_size is not None else market.tick_size
+        effective_min = (
+            book.min_order_size if book.min_order_size is not None else market.min_order_size
+        )
         if effective_tick is None:
             reasons.append("tick_size_unknown")
         if effective_min is None:
             reasons.append("minimum_order_size_unknown")
-        if book.tick_size is not None and market.tick_size is not None and book.tick_size != market.tick_size:
+        if (
+            book.tick_size is not None
+            and market.tick_size is not None
+            and book.tick_size != market.tick_size
+        ):
             reasons.append("book_market_tick_size_mismatch")
-        if book.min_order_size is not None and market.min_order_size is not None and book.min_order_size != market.min_order_size:
+        if (
+            book.min_order_size is not None
+            and market.min_order_size is not None
+            and book.min_order_size != market.min_order_size
+        ):
             warnings.append("book_market_minimum_size_differs")
 
         if market.fees_enabled is True and market.fee_schedule is None:
@@ -114,22 +135,34 @@ class FreshnessStateGate:
                     reasons.append("book_stale")
         if book.book_hash is None and book.sequence is None:
             reasons.append("book_hash_and_sequence_unknown")
-        checks.update({
-            "market_active": market.active,
-            "market_closed": market.closed,
-            "accepting_orders": market.accepting_orders,
-            "enable_order_book": market.enable_order_book,
-            "neg_risk": market.neg_risk,
-            "fees_enabled": market.fees_enabled,
-            "book_continuity": book.continuity,
-            "stale_tolerance_seconds": self.stale_tolerance_seconds,
-        })
+        checks.update(
+            {
+                "market_active": market.active,
+                "market_closed": market.closed,
+                "accepting_orders": market.accepting_orders,
+                "enable_order_book": market.enable_order_book,
+                "neg_risk": market.neg_risk,
+                "fees_enabled": market.fees_enabled,
+                "book_continuity": book.continuity,
+                "stale_tolerance_seconds": self.stale_tolerance_seconds,
+            }
+        )
 
         if any(reason in {"book_stale", "book_freshness_stale"} for reason in reasons):
             status = "stale"
             freshness = Freshness.STALE
             reason_code = "STALE_BOOK"
-        elif any(reason in {"book_market_identity_mismatch", "book_token_identity_mismatch", "book_neg_risk_mismatch", "book_sequence_gap_or_inconsistency", "book_market_tick_size_mismatch"} for reason in reasons):
+        elif any(
+            reason
+            in {
+                "book_market_identity_mismatch",
+                "book_token_identity_mismatch",
+                "book_neg_risk_mismatch",
+                "book_sequence_gap_or_inconsistency",
+                "book_market_tick_size_mismatch",
+            }
+            for reason in reasons
+        ):
             status = "rejected"
             freshness = Freshness.INCONSISTENT
             reason_code = "INCONSISTENT_STATE"
@@ -142,8 +175,21 @@ class FreshnessStateGate:
             freshness = Freshness.FRESH
             reason_code = None
         return GateResult(
-            decision=Decision(status=status, reason_code=reason_code, reasons=tuple(reasons), warnings=tuple(warnings), freshness=freshness, provenance_ids=tuple(dict.fromkeys(provenance_ids)), assumptions={"stale_tolerance_seconds": self.stale_tolerance_seconds}, checks=checks),
+            decision=Decision(
+                status=status,
+                reason_code=reason_code,
+                reasons=tuple(reasons),
+                warnings=tuple(warnings),
+                freshness=freshness,
+                provenance_ids=tuple(dict.fromkeys(provenance_ids)),
+                assumptions={"stale_tolerance_seconds": self.stale_tolerance_seconds},
+                checks=checks,
+            ),
             effective_tick_size=effective_tick,
             effective_min_order_size=effective_min,
-            effective_fee_schedule=market.fee_schedule if market.fees_enabled is not False else FeeSchedule(rate=Decimal("0"), exponent=Decimal("1"), taker_only=True, version="explicit-fee-free"),
+            effective_fee_schedule=market.fee_schedule
+            if market.fees_enabled is not False
+            else FeeSchedule(
+                rate=Decimal(0), exponent=Decimal(1), taker_only=True, version="explicit-fee-free"
+            ),
         )

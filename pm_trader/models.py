@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from decimal import Decimal
 from enum import Enum
-from typing import Any, Mapping
+from typing import Any
 
+from .errors import LocalValidationError
 from .precision import decimal
 
 
@@ -106,7 +108,7 @@ class FeeSchedule:
     """
 
     rate: Decimal
-    exponent: Decimal = Decimal("1")
+    exponent: Decimal = Decimal(1)
     taker_only: bool = True
     rebate_rate: Decimal | None = None
     version: str = "clob-v2-dynamic"
@@ -118,7 +120,9 @@ class FeeSchedule:
         object.__setattr__(self, "rate", decimal(self.rate, field="fee_schedule.rate"))
         object.__setattr__(self, "exponent", decimal(self.exponent, field="fee_schedule.exponent"))
         if self.rebate_rate is not None:
-            object.__setattr__(self, "rebate_rate", decimal(self.rebate_rate, field="fee_schedule.rebate_rate"))
+            object.__setattr__(
+                self, "rebate_rate", decimal(self.rebate_rate, field="fee_schedule.rebate_rate")
+            )
 
 
 @dataclass(frozen=True)
@@ -162,11 +166,23 @@ class MarketState:
             if isinstance(token, MarketToken):
                 converted_tokens.append(token)
             elif isinstance(token, Mapping):
-                converted_tokens.append(MarketToken(token_id=str(token.get("token_id", token.get("tokenId", ""))), outcome=str(token.get("outcome", token.get("name", "")))))
+                converted_tokens.append(
+                    MarketToken(
+                        token_id=str(token.get("token_id", token.get("tokenId", ""))),
+                        outcome=str(token.get("outcome", token.get("name", ""))),
+                    )
+                )
             else:
                 raise TypeError("market tokens must be MarketToken or mapping values")
         object.__setattr__(self, "tokens", tuple(converted_tokens))
-        object.__setattr__(self, "outcome_prices", tuple(None if value is None else decimal(value, field="outcome_price") for value in self.outcome_prices))
+        object.__setattr__(
+            self,
+            "outcome_prices",
+            tuple(
+                None if value is None else decimal(value, field="outcome_price")
+                for value in self.outcome_prices
+            ),
+        )
         if isinstance(self.freshness, str):
             object.__setattr__(self, "freshness", Freshness(self.freshness))
 
@@ -280,7 +296,7 @@ class PaperOrder:
     expires_at: str | None = None
     latency_ms: int = 0
     queue_policy: str = "front_of_queue"
-    queue_ahead: Decimal = Decimal("0")
+    queue_ahead: Decimal = Decimal(0)
     model_version: str = "matcher-v1"
     status: str = OrderStatus.NEW.value
     remaining_quantity: Decimal | None = None
@@ -293,14 +309,16 @@ class PaperOrder:
         object.__setattr__(self, "quantity", decimal(self.quantity, field="order.quantity"))
         if self.size is not None:
             object.__setattr__(self, "size", decimal(self.size, field="order.size"))
-        object.__setattr__(self, "queue_ahead", decimal(self.queue_ahead, field="order.queue_ahead"))
+        object.__setattr__(
+            self, "queue_ahead", decimal(self.queue_ahead, field="order.queue_ahead")
+        )
 
     def effective_quantity(self) -> Decimal:
         if self.size is not None:
             return self.size
         return self.quantity
 
-    def with_status(self, status: str, *, remaining: Decimal | None = None) -> "PaperOrder":
+    def with_status(self, status: str, *, remaining: Decimal | None = None) -> PaperOrder:
         return PaperOrder(
             order_id=self.order_id,
             market_id=self.market_id,
@@ -348,7 +366,9 @@ class Fill:
         if self.fee is not None:
             object.__setattr__(self, "fee", decimal(self.fee, field="fill.fee"))
         if self.rebate_estimate is not None:
-            object.__setattr__(self, "rebate_estimate", decimal(self.rebate_estimate, field="fill.rebate_estimate"))
+            object.__setattr__(
+                self, "rebate_estimate", decimal(self.rebate_estimate, field="fill.rebate_estimate")
+            )
 
     @property
     def shares(self) -> Decimal:
@@ -413,7 +433,7 @@ class Decision:
 
 @dataclass(frozen=True)
 class SimulationConfig:
-    starting_cash: Decimal = Decimal("10000")
+    starting_cash: Decimal = Decimal(10000)
     stale_tolerance_seconds: int = 30
     latency_ms: int = 0
     queue_policy: str = "front_of_queue"
@@ -427,7 +447,17 @@ class SimulationConfig:
     max_events: int = 100_000
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "starting_cash", decimal(self.starting_cash, field="starting_cash"))
+        object.__setattr__(
+            self, "starting_cash", decimal(self.starting_cash, field="starting_cash")
+        )
+        if self.starting_cash < 0:
+            raise LocalValidationError("starting_cash cannot be negative")
+        if self.stale_tolerance_seconds < 0:
+            raise LocalValidationError("stale_tolerance_seconds cannot be negative")
+        if self.latency_ms < 0:
+            raise LocalValidationError("latency_ms cannot be negative")
+        if self.max_events < 1:
+            raise LocalValidationError("max_events must be positive")
 
 
 @dataclass(frozen=True)
