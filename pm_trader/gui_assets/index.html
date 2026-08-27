@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#111318">
+    <title>Paper Trader / Trade History</title>
+    <link rel="stylesheet" href="/styles.css">
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="wordmark" href="/" aria-label="Paper trader trade history home">
+        <span class="wordmark-mark" aria-hidden="true">P</span>
+        <span>paper trader</span>
+      </a>
+      <div class="topbar-status" id="connection-status">LOCAL STORE · READ-ONLY</div>
+    </header>
+
+    <main class="shell">
+      <section class="intro" aria-labelledby="page-title">
+        <p class="eyebrow">Review console / stored evidence</p>
+        <h1 id="page-title">Trade history, without the guesswork.</h1>
+        <p class="lede">A compact view of what the paper simulator recorded, why it happened, and which assumptions shaped the result.</p>
+      </section>
+
+      <section class="safety-banner" role="note" aria-label="Paper-only safety notice">
+        <div class="safety-icon" aria-hidden="true">✓</div>
+        <div>
+          <strong>PAPER ONLY · LOCAL READ-ONLY</strong>
+          <p>Paper fills and P&amp;L are model outputs, not live execution or realized cash. This view reads the selected local SQLite store and does not call a provider.</p>
+        </div>
+      </section>
+
+      <section class="filter-card" aria-labelledby="filter-title">
+        <div class="section-heading compact-heading">
+          <div>
+            <p class="eyebrow">Slice the record</p>
+            <h2 id="filter-title">Find a past trade</h2>
+          </div>
+          <button class="quiet-button" id="refresh-button" type="button">Refresh local data</button>
+        </div>
+        <form id="filters" class="filters">
+          <label class="field field-search">
+            <span>Search</span>
+            <input id="search" name="search" type="search" placeholder="Market, ID, outcome…" autocomplete="off">
+          </label>
+          <label class="field">
+            <span>Side</span>
+            <select id="side" name="side">
+              <option value="">Any side</option>
+              <option value="buy">Buy</option>
+              <option value="sell">Sell</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Status</span>
+            <select id="status" name="status">
+              <option value="">Any status</option>
+              <option value="filled">Filled</option>
+              <option value="partially_filled">Partially filled</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Source</span>
+            <select id="source-kind" name="source_kind">
+              <option value="">All records</option>
+              <option value="canonical_fill">Canonical fills</option>
+              <option value="legacy_trade">Legacy trades</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Market / asset</span>
+            <input id="market" name="market" type="search" placeholder="ID or slug" autocomplete="off">
+          </label>
+          <label class="field">
+            <span>Outcome</span>
+            <input id="outcome" name="outcome" type="search" placeholder="Yes, No…" autocomplete="off">
+          </label>
+          <label class="field field-run">
+            <span>Run ID</span>
+            <input id="run-id" name="run_id" type="search" placeholder="Optional run identity" autocomplete="off">
+          </label>
+          <div class="filter-actions">
+            <button class="primary-button" type="submit">Apply filters</button>
+            <button class="quiet-button" id="clear-filters" type="button">Clear</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="workspace" aria-label="Trade history and selected trade">
+        <div class="history-card card">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Stored records</p>
+              <h2>Recent trades</h2>
+            </div>
+            <p class="result-meta" id="result-meta">Loading…</p>
+          </div>
+          <div class="status-line" id="history-status" role="status" aria-live="polite">Loading local history…</div>
+          <div class="table-wrap">
+            <table>
+              <caption class="sr-only">Stored paper-trade history</caption>
+              <thead>
+                <tr>
+                  <th scope="col">When</th>
+                  <th scope="col">Market / outcome</th>
+                  <th scope="col">Side</th>
+                  <th scope="col">Status</th>
+                  <th scope="col" class="numeric">Filled</th>
+                  <th scope="col" class="numeric">Price</th>
+                  <th scope="col" class="numeric">Notional</th>
+                  <th scope="col" class="numeric">Fee</th>
+                </tr>
+              </thead>
+              <tbody id="trade-rows"></tbody>
+            </table>
+          </div>
+          <div class="empty-state" id="history-empty" hidden>
+            <p class="empty-kicker">No matching records</p>
+            <p>Try clearing a filter, or point the launcher at a data directory containing stored paper fills.</p>
+          </div>
+          <nav class="pagination" aria-label="Trade history pages">
+            <button class="quiet-button" id="previous-page" type="button" disabled>Previous</button>
+            <span id="page-meta">Page 1</span>
+            <button class="quiet-button" id="next-page" type="button" disabled>Next</button>
+          </nav>
+        </div>
+
+        <aside class="detail-card card" aria-labelledby="detail-title">
+          <div class="detail-empty" id="detail-empty">
+            <div class="detail-mark" aria-hidden="true">↗</div>
+            <p class="empty-kicker">Select a record</p>
+            <p>Choose a trade from the list to inspect execution, accounting, evidence, and assumptions.</p>
+          </div>
+          <div id="detail-content" hidden>
+            <div class="detail-heading">
+              <div>
+                <p class="eyebrow">Selected record</p>
+                <h2 id="detail-title">Trade detail</h2>
+              </div>
+              <span class="source-badge" id="detail-source"></span>
+            </div>
+            <p class="detail-id" id="detail-id"></p>
+            <div id="detail-warning" class="detail-warning" role="status" hidden></div>
+            <div id="detail-sections" class="detail-sections"></div>
+          </div>
+        </aside>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <span>pm-trader / local review console</span>
+      <span id="store-path">Store path is reported by the local server.</span>
+    </footer>
+  </body>
+</html>

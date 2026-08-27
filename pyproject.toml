@@ -24,6 +24,9 @@ pm-trader-mcp = "pm_trader.mcp_server:main"
 [tool.setuptools.packages.find]
 include = ["pm_trader*"]
 
+[tool.setuptools.package-data]
+pm_trader = ["gui_assets/*.html", "gui_assets/*.css", "gui_assets/*.js"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"

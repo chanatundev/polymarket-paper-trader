@@ -100,6 +100,17 @@ def _parser() -> argparse.ArgumentParser:
     explain.add_argument("--reason", action="append", default=[])
     explain.add_argument("--freshness", default="unknown")
 
+    gui = sub.add_parser("gui", help="serve the local read-only trade-history GUI")
+    gui.add_argument(
+        "--port", type=int, default=8765, help="loopback TCP port (0 chooses a free port)"
+    )
+    gui.add_argument(
+        "--open",
+        dest="open_browser",
+        action="store_true",
+        help="open the loopback URL in the default browser",
+    )
+
     sub.add_parser("safety", help="show the immutable paper-only boundary")
     return parser
 
@@ -166,8 +177,24 @@ def _order(args: argparse.Namespace, market: Any) -> PaperOrder:
     )
 
 
-def run(argv: list[str] | None = None) -> tuple[int, dict[str, Any]]:
-    args = _parser().parse_args(argv)
+def _gui_descriptor(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
+    return 0, envelope(
+        result={
+            "mode": "local_read_only_gui",
+            "host": "127.0.0.1",
+            "port": args.port,
+            "open_browser": bool(args.open_browser),
+        },
+        assumptions={
+            "paper_only": True,
+            "read_only": True,
+            "provider_calls": False,
+            "launcher": "pm_trader.gui.serve_gui",
+        },
+    )
+
+
+def _run_parsed(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
     store = SQLiteStore(args.data_dir)
     try:
         if args.command == "safety":
@@ -278,8 +305,23 @@ def run(argv: list[str] | None = None) -> tuple[int, dict[str, Any]]:
         store.close()
 
 
+def run(argv: list[str] | None = None) -> tuple[int, dict[str, Any]]:
+    """Run a JSON-returning command; GUI returns its launch descriptor for tests/callers."""
+
+    args = _parser().parse_args(argv)
+    if args.command == "gui":
+        return _gui_descriptor(args)
+    return _run_parsed(args)
+
+
 def main(argv: list[str] | None = None) -> None:
-    code, payload = run(argv)
+    args = _parser().parse_args(argv)
+    if args.command == "gui":
+        from .gui import serve_gui
+
+        serve_gui(args.data_dir, port=args.port, open_browser=args.open_browser)
+        return
+    code, payload = _run_parsed(args)
     encoded, truncated = bounded_json(payload, ResourceLimits().max_response_bytes)
     if truncated:
         encoded = canonical_json(
