@@ -1,0 +1,34 @@
+{
+  "id": "event-general-001",
+  "slug": "example-general-event",
+  "title": "Example general event",
+  "description": "Sanitized event-by-slug fixture.",
+  "active": true,
+  "closed": false,
+  "startDate": "2026-01-01T00:00:00Z",
+  "endDate": "2030-12-31T23:59:59Z",
+  "markets": [
+    {
+      "id": "1001",
+      "conditionId": "0xgeneral-event-001",
+      "slug": "will-the-example-event-happen-by-2030",
+      "question": "Will the example general event happen by 2030?",
+      "outcomes": ["Yes", "No"],
+      "outcomePrices": ["0.64", "0.36"],
+      "clobTokenIds": ["token-general-yes", "token-general-no"],
+      "active": true,
+      "closed": false,
+      "acceptingOrders": true,
+      "enableOrderBook": true,
+      "orderMinSize": "5",
+      "orderPriceMinTickSize": "0.01",
+      "negRisk": false,
+      "feesEnabled": true,
+      "feeSchedule": {"exponent": 1, "rate": "0.05", "takerOnly": true, "rebateRate": "0.25"},
+      "eventId": "event-general-001",
+      "eventSlug": "example-general-event",
+      "updatedAt": "2026-08-26T20:00:04Z"
+    }
+  ],
+  "retrieved_at": "2026-08-26T20:00:05Z"
+}

@@ -1,0 +1,5 @@
+[
+  {"event_type": "book", "market": "0xgeneral-event-001", "asset_id": "token-general-yes", "timestamp": "2026-08-26T20:00:10Z", "hash": "ws-book-1", "bids": [{"price": "0.62", "size": "40"}], "asks": [{"price": "0.66", "size": "25"}], "min_order_size": "5", "tick_size": "0.01", "neg_risk": false, "sequence": 10},
+  {"event_type": "price_change", "market": "0xgeneral-event-001", "asset_id": "token-general-yes", "timestamp": "2026-08-26T20:00:11Z", "sequence": 11, "side": "ask", "price": "0.66", "size": "20"},
+  {"event_type": "price_change", "market": "0xgeneral-event-001", "asset_id": "token-general-yes", "timestamp": "2026-08-26T20:00:12Z", "sequence": 13, "side": "bid", "price": "0.63", "size": "10"}
+]

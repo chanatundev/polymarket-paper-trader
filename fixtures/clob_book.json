@@ -1,0 +1,21 @@
+{
+  "market": "0xgeneral-event-001",
+  "asset_id": "token-general-yes",
+  "timestamp": "2026-08-26T20:00:10Z",
+  "hash": "book-hash-general-001",
+  "bids": [
+    {"price": "0.62", "size": "40"},
+    {"price": "0.61", "size": "80"},
+    {"price": "0.60", "size": "100"}
+  ],
+  "asks": [
+    {"price": "0.66", "size": "25"},
+    {"price": "0.67", "size": "40"},
+    {"price": "0.69", "size": "100"}
+  ],
+  "min_order_size": "5",
+  "tick_size": "0.01",
+  "neg_risk": false,
+  "last_trade_price": "0.65",
+  "fixtureVersion": "clob-2026-08-26-v1"
+}

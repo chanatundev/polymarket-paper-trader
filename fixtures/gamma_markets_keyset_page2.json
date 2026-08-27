@@ -1,0 +1,31 @@
+{
+  "markets": [
+    {
+      "id": "1002",
+      "conditionId": "0xgeneral-event-002",
+      "slug": "will-a-public-report-be-released-by-2030",
+      "question": "Will a public report be released by 2030?",
+      "description": "Second sanitized general-event contract fixture.",
+      "outcomes": ["Yes", "No"],
+      "outcomePrices": ["0.52", "0.48"],
+      "clobTokenIds": ["token-report-yes", "token-report-no"],
+      "active": true,
+      "closed": false,
+      "acceptingOrders": true,
+      "enableOrderBook": true,
+      "orderMinSize": "5",
+      "orderPriceMinTickSize": "0.01",
+      "negRisk": false,
+      "feesEnabled": false,
+      "feeSchedule": null,
+      "volumeNum": 80000,
+      "liquidityNum": 15000,
+      "category": "Other",
+      "eventId": "event-general-002",
+      "eventSlug": "example-report-event",
+      "updatedAt": "2026-08-26T20:00:02Z",
+      "fixtureVersion": "gamma-2026-08-26-v1"
+    }
+  ],
+  "retrieved_at": "2026-08-26T20:00:03Z"
+}

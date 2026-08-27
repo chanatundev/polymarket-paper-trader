@@ -1,0 +1,33 @@
+{
+  "markets": [
+    {
+      "id": "1001",
+      "conditionId": "0xgeneral-event-001",
+      "slug": "will-the-example-event-happen-by-2030",
+      "question": "Will the example general event happen by 2030?",
+      "description": "Sanitized general-event contract fixture.",
+      "outcomes": ["Yes", "No"],
+      "outcomePrices": ["0.64", "0.36"],
+      "clobTokenIds": ["token-general-yes", "token-general-no"],
+      "active": true,
+      "closed": false,
+      "acceptingOrders": true,
+      "enableOrderBook": true,
+      "orderMinSize": "5",
+      "orderPriceMinTickSize": "0.01",
+      "negRisk": false,
+      "feesEnabled": true,
+      "feeSchedule": {"exponent": 1, "rate": "0.05", "takerOnly": true, "rebateRate": "0.25"},
+      "volumeNum": 125000,
+      "liquidityNum": 24000,
+      "category": "Other",
+      "eventId": "event-general-001",
+      "eventSlug": "example-general-event",
+      "updatedAt": "2026-08-26T20:00:00Z",
+      "endDateIso": "2030-12-31T23:59:59Z",
+      "fixtureVersion": "gamma-2026-08-26-v1"
+    }
+  ],
+  "next_cursor": "fixture-cursor-page-2",
+  "retrieved_at": "2026-08-26T20:00:01Z"
+}

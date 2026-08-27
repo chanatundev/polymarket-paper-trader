@@ -1,0 +1,21 @@
+{
+  "condition_id": "0xgeneral-event-001",
+  "market_slug": "will-the-example-event-happen-by-2030",
+  "question": "Will the example general event happen by 2030?",
+  "active": true,
+  "closed": false,
+  "accepting_orders": true,
+  "enable_order_book": true,
+  "minimum_order_size": "5",
+  "minimum_tick_size": "0.01",
+  "neg_risk": false,
+  "fees_enabled": true,
+  "fee_schedule": {"exponent": 1, "rate": "0.05", "taker_only": true, "rebate_rate": "0.25"},
+  "tokens": [
+    {"token_id": "token-general-yes", "outcome": "Yes"},
+    {"token_id": "token-general-no", "outcome": "No"}
+  ],
+  "outcomes": ["Yes", "No"],
+  "outcome_prices": ["0.64", "0.36"],
+  "fixtureVersion": "clob-2026-08-26-v1"
+}
