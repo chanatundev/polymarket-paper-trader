@@ -1,7 +1,7 @@
 ---
 type: implementation-checklist
 project: polymarket-paper-trader
-status: core-implementation-complete-gui-pending
+status: phase-5-gui-implemented-pending-release-gates
 updated: 2026-08-27
 ---
 
@@ -20,8 +20,8 @@ This is the implementation checklist for the planning vault in this project. It 
 ## Current baseline
 
 - The source audit and planning pass are complete.
-- The successor implementation is complete in this user-selected checkout. Local evidence is linked below; live-provider and human-review gates remain separate.
-- The next product slice is a planned local, read-only GUI for viewing past canonical paper fills and compatible legacy trades. No GUI implementation evidence exists yet.
+- The successor implementation, including the requested Phase 5 GUI, is complete in this user-selected checkout. Local evidence is linked below; live-provider and human-review gates remain separate.
+- The GUI is a bounded local projection of canonical paper fills and compatible legacy trades. It does not create a database, call a provider, or expose order controls.
 - The initial product is public-data, paper-only research and simulation. It must not create, sign, submit, cancel, or redeem live orders or move live funds.
 - Paper fills are model outputs, not evidence of live execution or profitability.
 
@@ -35,7 +35,7 @@ Complete this phase before changing provider adapters or building the matcher.
 - [x] Write compatibility, malformed-payload, route, and rate-limit tests before adapter changes so each failure identifies one field, route, or semantic mismatch. Add negative fixtures for missing and invalid fields. (evidence: `tests/test_contracts.py`) (Next Actions; Roadmap; NFR-003, NFR-006)
 - [x] Set explicit bounds for page size, history fidelity, recording duration/retention, replay size, and agent-facing response size. Keep the policy visible where long-running recording or raw-payload retention is implemented. (evidence: `pm_trader/api.py::ResourceLimits`, `pm_trader/recording.py::Recorder`, `pm_trader/mcp_server.py::main`) (Constraints; FR-011; NFR-005; Risk R-008)
 - [x] Record research dates, official source URLs, fixture versions, and the boundary between point-in-time live probes, fixtures, local tests, and human review. (evidence: `obsidian/01_Research/Sources.md`, fixture `fixtureVersion` fields, `README.md`) (Sources; Constraints; Risk R-010)
-- [ ] Review the paper-only safety boundary and the proposed schema contract before implementation proceeds. (Roadmap Phase 0; Acceptance Criteria)
+- [ ] Complete human review of the paper-only safety boundary and schema contract before release acceptance. (Roadmap Phase 0; Acceptance Criteria)
 
 ## Phase 1 — Current-data adapters and normalized state
 
@@ -80,25 +80,29 @@ Complete this phase before changing provider adapters or building the matcher.
 
 ## Phase 5 — Local trade-history GUI
 
-This phase is approved for planning by D-005 but is not implemented by the current checkout. It adds human inspection of stored paper history without adding a live market terminal or order-control surface.
+This phase was approved by D-005 and is implemented in commits `0314eea`,
+`bf7520f`, and `5cdb16c`. It adds human inspection of stored paper history
+without adding a live market terminal or order-control surface.
 
-- [ ] Define a bounded `TradeHistoryRecord` list/detail contract that normalizes canonical `fills` and compatible legacy `trades`, keeps `source_kind` visible, and uses stable history IDs. (Requirements FR-016–017; [Trade-history GUI](obsidian/04_Design/Trade_History_GUI.md))
-- [ ] Add a dedicated parameterized read/query service over SQLite that joins fills, orders, order events, ledger entries, simulation runs, reports, and legacy trades without exposing raw SQL to the UI. Apply allow-listed filters, newest-first ordering, pagination, and existing response bounds. (Requirements FR-016–018; NFR-007)
-- [ ] Preserve or non-destructively capture friendly market/outcome metadata for canonical history. If it is absent, expose the asset/market ID and an explicit unknown reason rather than making a provider request or guessing. (Requirements FR-017; Risk R-013)
-- [ ] Add a dependency-light local browser server and `pm-trader gui` launcher. Bind to `127.0.0.1` by default, serve static assets, expose only bounded `GET` history/detail routes, and avoid provider adapters, credentials, and all write-capable workflows. (Requirements FR-018; NFR-008)
-- [ ] Build the list/filter/detail UI with a persistent paper-only/read-only notice, execution/accounting/evidence/assumption sections, and clear loading, empty, malformed-store, missing-detail, warning, and unknown states. (Requirements FR-016–018; NFR-009)
-- [ ] Add canonical/legacy seeded integration fixtures and route/static tests for list/detail joins, filters, bounds, HTML escaping, keyboard navigation, no provider calls, no SQLite mutation, and no write-like endpoint. (Acceptance Criteria; Validation Plan)
-- [ ] Update `README.md` and `docs/CLI.md` with the launch command, data-directory behavior, filters, limits, and paper/live evidence boundary after the GUI is implemented. (NFR-007–008)
+- [x] Define a bounded `TradeHistoryRecord` list/detail contract that normalizes canonical `fills` and compatible legacy `trades`, keeps `source_kind` visible, and uses stable history IDs. (evidence: `pm_trader/history.py`, `tests/test_history_gui.py::test_reader_merges_canonical_and_legacy_with_full_detail`; Requirements FR-016–017)
+- [x] Add a dedicated parameterized read/query service over SQLite that joins fills, orders, order events, ledger entries, simulation runs, reports, and legacy trades without exposing raw SQL to the UI. Apply allow-listed filters, newest-first ordering, pagination, and existing response bounds. (evidence: `pm_trader/history.py::TradeHistoryReader`, `tests/test_history_gui.py::test_reader_filters_and_paginates_bounded_results`; Requirements FR-016–018; NFR-007)
+- [x] Preserve or non-destructively capture friendly market/outcome metadata for canonical history. If it is absent, expose the asset/market ID and an explicit unknown reason rather than making a provider request or guessing. (evidence: `pm_trader/history.py::_canonical_record_from_row`, `tests/test_history_gui.py::test_reader_supports_canonical_tables_without_order_events`; Requirements FR-017; Risk R-013)
+- [x] Add a dependency-light local browser server and `pm-trader gui` launcher. Bind to `127.0.0.1` by default, serve static assets, expose only bounded `GET` history/detail routes, and avoid provider adapters, credentials, and all write-capable workflows. (evidence: `pm_trader/gui.py`, `pm_trader/cli.py`, `tests/test_history_gui.py::test_gui_routes_are_bounded_local_gets_and_escape_stored_text`; Requirements FR-018; NFR-008)
+- [x] Build the list/filter/detail UI with a persistent paper-only/read-only notice, execution/accounting/evidence/assumption sections, and clear loading, empty, malformed-store, missing-detail, warning, and unknown states. (evidence: `pm_trader/gui_assets/`, `tests/test_history_gui.py::test_gui_reports_missing_store_without_creating_it`, `obsidian/07_Validation/GUI_Smoke_2026-08-27.md`; Requirements FR-016–018; NFR-009)
+- [x] Add canonical/legacy seeded integration fixtures and route/static tests for list/detail joins, filters, bounds, HTML escaping, keyboard navigation, no provider calls, no SQLite mutation, and no write-like endpoint. (evidence: `tests/test_history_gui.py`, `uv run python -m pytest -q` — 56 passed; Acceptance Criteria; Validation Plan)
+- [x] Update `README.md` and `docs/CLI.md` with the launch command, data-directory behavior, filters, limits, and paper/live evidence boundary. (evidence: `README.md`, `docs/CLI.md`; NFR-007–008)
 
 ### Phase 5 exit gate
 
-- [ ] A reviewer can launch the GUI against a seeded data directory, find a past trade, select it, and inspect its linked order/fill/ledger/report/provenance/assumption context without direct SQL access.
-- [ ] The GUI remains local/read-only and the tests prove it does not call a provider or mutate the store.
-- [ ] The GUI acceptance items in `obsidian/07_Validation/Acceptance_Criteria.md` have linked evidence; unsupported visual/accessibility claims remain human-review gates.
+- [x] A reviewer can launch the GUI against a seeded data directory, find a past trade, select it, and inspect its linked order/fill/ledger/report/provenance/assumption context without direct SQL access. (evidence: `obsidian/07_Validation/GUI_Smoke_2026-08-27.md`, `tests/test_history_gui.py`)
+- [x] The GUI remains local/read-only and the tests prove it does not call a provider or mutate the store. (evidence: `tests/test_history_gui.py::test_reader_is_sqlite_read_only_and_missing_store_does_not_get_created`, `tests/test_history_gui.py::test_gui_routes_are_bounded_local_gets_and_escape_stored_text`)
+- [x] The GUI acceptance items in `obsidian/07_Validation/Acceptance_Criteria.md` have linked evidence; unsupported provider-current, sharing, and broader accessibility claims remain release gates. (evidence: `obsidian/07_Validation/Acceptance_Criteria.md`, `obsidian/07_Validation/GUI_Smoke_2026-08-27.md`)
 
 ## Validation and release evidence
 
-The vault's acceptance checklist remains proposed until each checked item has linked evidence. Complete the following before calling the implementation accepted.
+The vault's broader acceptance checklist remains open until each checked item
+has linked evidence and its provider-current and human-review gates are
+resolved. The Phase 5 local implementation evidence is complete below.
 
 ### Current-data compatibility
 

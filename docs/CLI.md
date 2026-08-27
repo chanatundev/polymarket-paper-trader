@@ -69,6 +69,51 @@ There are no CLI flags for credentials, private keys, wallets, signing, order
 submission, redemption, or fund transfers. Local paper cancellation is only a
 paper lifecycle operation; it does not call a provider.
 
+## Local trade-history GUI
+
+Launch the lightweight browser review surface against the same data directory
+used by simulation and replay:
+
+```bash
+uv run python -m pm_trader --data-dir .pm-trader-demo gui
+```
+
+The server binds to `127.0.0.1` and stays in the foreground until interrupted.
+Use `--port 0` to choose a free loopback port or `--open` to open the displayed
+URL in the default browser:
+
+```bash
+uv run python -m pm_trader --data-dir .pm-trader-demo gui --port 8765 --open
+```
+
+The global `--data-dir` may name a directory (the GUI reads `paper.db` inside
+it) or a `.db`, `.sqlite`, or `.sqlite3` file. The GUI opens SQLite in immutable
+read-only mode; a missing store is reported in the page and does not create a
+directory or database. It makes no Gamma, CLOB, Data API, WebSocket, or RTDS
+requests and has no order, credential, wallet, or fund controls.
+
+The list is bounded to 25 rows by default and 100 rows at most per request. It
+is newest-first and can be filtered in the page by search text, side, status,
+source kind, market/asset, outcome, and run ID. The local API also accepts
+bounded `start` and `end` timestamp filters. Selecting a row shows its market,
+order, fill, accounting, timestamps, report/checksum, provenance, warnings,
+and declared assumptions; absent values remain explicit unknowns. Canonical
+records retain their `canonical_fill` source marker, while compatibility rows
+retain `legacy_trade`.
+
+The read-only routes are:
+
+| Route | Purpose |
+| --- | --- |
+| `GET /` | Static GUI shell. |
+| `GET /api/trades?limit=...&cursor=...` | Bounded history list and allow-listed filters. |
+| `GET /api/trades/{history_id}` | One bounded trade detail record. |
+
+Other methods return `405 Method Not Allowed`. JSON responses use the same
+64 KiB response bound as the agent-facing interface. The persistent banner in
+the UI states that paper fills and P&L are model outputs, not live execution or
+realized cash.
+
 ## Discovery
 
 ### List markets

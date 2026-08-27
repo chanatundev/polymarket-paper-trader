@@ -1,7 +1,7 @@
 ---
 type: gui-design
 project: polymarket-paper-trader
-status: proposed
+status: implemented
 updated: 2026-08-27
 ---
 
@@ -9,7 +9,10 @@ updated: 2026-08-27
 
 ## Decision
 
-Add a lightweight, local browser GUI for reviewing past paper trades. The GUI is an inspection surface over the selected SQLite data directory; it is not a live Polymarket terminal and does not replace the CLI/MCP workflows.
+The implementation adds a lightweight, local browser GUI for reviewing past
+paper trades. The GUI is an inspection surface over the selected SQLite data
+directory; it is not a live Polymarket terminal and does not replace the
+CLI/MCP workflows.
 
 The first slice uses the repository's existing Python/SQLite shape and static HTML/CSS/JavaScript. A separate frontend build system, desktop wrapper, provider stream, authentication flow, and order-control surface are not required.
 
@@ -35,7 +38,10 @@ The GUI may read local records produced by paper simulation, replay, and the ret
 
 ## Data contract
 
-The planned bounded read model should normalize each list row to a stable `history_id` and `source_kind` while retaining source-specific identifiers. A canonical fill can use `run_id:fill_id`; a legacy trade can use `legacy:trade_id`.
+The implemented bounded read model normalizes each list row to a stable
+`history_id` and `source_kind` while retaining source-specific identifiers. A
+canonical fill uses `canonical:{run_id}:{fill_id}`; a legacy trade uses
+`legacy:{trade_id}`.
 
 | Display group | Fields | Evidence rule |
 | --- | --- | --- |
@@ -72,9 +78,9 @@ Selecting a row opens an adjacent panel or a responsive detail section. It shoul
 
 The detail view may link to a stored report by `run_id` and show its checksum, but it does not run a new simulation or render the entire raw dataset. Raw payloads remain bounded and sanitized.
 
-## Planned local interface
+## Implemented local interface
 
-The implementation may use a small standard-library HTTP server and static assets:
+The implementation uses a small standard-library HTTP server and static assets:
 
 ```text
 pm-trader --data-dir .pm-trader gui [--port PORT]
@@ -88,18 +94,36 @@ pm-trader --data-dir .pm-trader gui [--port PORT]
                                 +--> local SQLite read-only connection
 ```
 
-The exact module names can change during implementation, but the boundary is fixed: the GUI calls a typed, parameterized read service; it does not construct SQL, inspect internal tables directly, or instantiate the provider adapters. Bind to `127.0.0.1` by default. Keep the existing `ResourceLimits` page/response bounds or add an explicit GUI limit that is no looser.
+The implementation lives in `pm_trader/history.py` and `pm_trader/gui.py` with
+static assets under `pm_trader/gui_assets/`. The GUI calls the typed,
+parameterized `TradeHistoryReader`; it does not construct SQL in JavaScript,
+inspect tables from the browser, or instantiate provider adapters. The server
+binds to `127.0.0.1`, uses immutable SQLite read-only mode, and applies the
+existing page/response bounds.
 
-For canonical records, detail joins should use stable IDs across `fills`, `orders`, `order_events`, `ledger_entries`, `simulation_runs`, and `reports`. For legacy records, the reader can adapt `trades` rows to the same display contract and must retain the `legacy` source marker. If the legacy table is absent, return canonical-only history without creating or altering schema. A read-only SQLite URI/connection mode is preferred; if the implementation uses a normal connection, tests must prove that all GUI routes execute reads only.
+The implemented routes are `GET /`, `GET /api/trades` with allow-listed
+filters and cursor pagination, and `GET /api/trades/{history_id}`. Other
+methods return `405`. The `pm-trader gui` launcher supports `--port` and
+`--open`; a missing store is reported without creating a directory or
+database.
 
-## Implementation sequence
+For canonical records, detail joins use stable IDs across `fills`, `orders`, `order_events`, `ledger_entries`, `simulation_runs`, and `reports`. For legacy records, the reader adapts `trades` rows to the same display contract and retains the `legacy` source marker. If the legacy table is absent, it returns canonical-only history without creating or altering schema. SQLite immutable read-only mode prevents the GUI from creating WAL sidecars or other database changes.
 
-1. Define the typed list/detail record and source adapters for canonical and legacy history.
-2. Capture or surface friendly market/outcome metadata without changing ledger meaning.
-3. Add bounded, allow-listed store queries and a service-level error envelope.
-4. Add loopback HTTP routes and static UI states.
-5. Add seeded integration fixtures for canonical fills, legacy trades, unknown fields, warnings, partial fills, and missing report context.
-6. Validate read-only behavior, response bounds, HTML escaping, keyboard navigation, and the paper/live evidence boundary.
+## Implementation evidence
+
+- `pm_trader/history.py` provides bounded canonical/legacy list and detail
+  projections, source markers, stable IDs, filters, pagination, joins, and
+  explicit unknown reasons.
+- `pm_trader/gui.py` provides the loopback-only JSON/static server and
+  paper/read-only envelope.
+- `pm_trader/gui_assets/` provides the list/filter/detail surface with
+  text-only data insertion, visible warnings, empty/error states, and
+  keyboard-focusable row buttons.
+- `tests/test_history_gui.py` covers canonical/legacy fixtures, joins,
+  filters, bounds, escaping, no-provider behavior, immutable reads, and
+  write-like route rejection.
+- [[../07_Validation/GUI_Smoke_2026-08-27|GUI smoke review]] records the
+  local browser check.
 
 ## Exit criteria
 
@@ -108,4 +132,6 @@ For canonical records, detail joins should use stable IDs across `fills`, `order
 - The selected detail shows execution/accounting/evidence/assumption fields or explicit unknown reasons.
 - Empty, malformed-store, missing-detail, and oversized-result states are safe and understandable.
 - Route/static tests prove no provider calls, no credentials, no write-like endpoints, and no SQLite mutation.
-- A manual review confirms keyboard access, readable status cues, and honest paper-only wording.
+- The 2026-08-27 manual review confirms keyboard access, readable status cues,
+  responsive layout, and honest paper-only wording; broader accessibility
+  conformance remains a release gate.

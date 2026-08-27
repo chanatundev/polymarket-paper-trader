@@ -38,8 +38,8 @@ updated: 2026-08-27
 ## D-005 — Add a local read-only trade-history GUI
 
 - **Date:** 2026-08-27
-- **Status:** Accepted for planning
+- **Status:** Accepted and implemented
 - **Decision:** Add a lightweight loopback-only browser GUI that reads bounded canonical paper fills and compatible legacy trades from the selected local SQLite store. Provide list/filter/detail views for execution, accounting, provenance, warnings, and assumptions. Keep the surface GET-only and separate from provider adapters and all order controls.
 - **Reason:** A human reviewer should be able to inspect past paper trades and understand their evidence without learning private SQLite tables, while the existing CLI/MCP surface remains the agent-facing interface.
 - **Tradeoffs:** A small local HTTP/static surface adds a UI and read-model maintenance cost, but avoids a desktop wrapper and keeps the core dependency-free. Friendly labels may require non-destructive metadata capture; missing values remain explicit unknowns.
-- **Evidence:** User request on 2026-08-27; [[../04_Design/Trade_History_GUI|trade-history GUI design]]; [[../03_Requirements/Requirements|FR-016–018]].
+- **Evidence:** User request on 2026-08-27; [[../04_Design/Trade_History_GUI|trade-history GUI design]]; [[../03_Requirements/Requirements|FR-016–018]]; `pm_trader/history.py`; `pm_trader/gui.py`; `tests/test_history_gui.py`; [[../07_Validation/GUI_Smoke_2026-08-27|GUI smoke review]].

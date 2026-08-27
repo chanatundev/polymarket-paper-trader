@@ -1,7 +1,7 @@
 ---
 type: acceptance-criteria
 project: polymarket-paper-trader
-status: proposed
+status: phase-5-implemented-release-gates-open
 updated: 2026-08-27
 ---
 
@@ -29,11 +29,11 @@ updated: 2026-08-27
 
 ## Local trade-history GUI
 
-- [ ] `pm-trader --data-dir <path> gui` can open a selected paper-trading data directory on loopback without requiring provider access, credentials, or a frontend build service.
-- [ ] The GUI lists bounded, newest-first canonical paper fills and compatible legacy trades, preserves the source kind, supports allow-listed filters, and has clear empty/loading/error states.
-- [ ] Selecting a row shows the available market/outcome, order, fill, accounting, timestamps, run/dataset, provenance, warnings, model/queue/latency assumptions, and explicit unknown reasons.
-- [ ] The GUI displays a persistent paper-only/read-only notice and does not provide create, edit, cancel, submit, sign, redeem, credential, or fund controls.
-- [ ] Integration/static checks prove GUI routes are GET-only, bounded, parameterized, provider-free, and do not mutate SQLite; a manual review confirms keyboard navigation and readable state cues.
+- [x] `pm-trader --data-dir <path> gui` can open a selected paper-trading data directory on loopback without requiring provider access, credentials, or a frontend build service. (evidence: `pm_trader/cli.py`, `pm_trader/gui.py`, `tests/test_history_gui.py::test_cli_gui_descriptor_does_not_open_or_create_a_store`, [[GUI smoke review|GUI smoke review]])
+- [x] The GUI lists bounded, newest-first canonical paper fills and compatible legacy trades, preserves the source kind, supports allow-listed filters, and has clear empty/loading/error states. (evidence: `pm_trader/history.py`, `pm_trader/gui_assets/`, `tests/test_history_gui.py::test_reader_filters_and_paginates_bounded_results`, `tests/test_history_gui.py::test_gui_reports_missing_store_without_creating_it`)
+- [x] Selecting a row shows the available market/outcome, order, fill, accounting, timestamps, run/dataset, provenance, warnings, model/queue/latency assumptions, and explicit unknown reasons. (evidence: `tests/test_history_gui.py::test_reader_merges_canonical_and_legacy_with_full_detail`, `obsidian/04_Design/Trade_History_GUI.md`, [[GUI smoke review|GUI smoke review]])
+- [x] The GUI displays a persistent paper-only/read-only notice and does not provide create, edit, cancel, submit, sign, redeem, credential, or fund controls. (evidence: `pm_trader/gui_assets/index.html`, `pm_trader/gui.py`, `tests/test_history_gui.py::test_gui_routes_are_bounded_local_gets_and_escape_stored_text`)
+- [x] Integration/static checks prove GUI routes are GET-only, bounded, parameterized, provider-free, and do not mutate SQLite; the 2026-08-27 browser review confirms keyboard-focusable row controls, visible focus styling, and readable text status cues. (evidence: `tests/test_history_gui.py`, `obsidian/07_Validation/GUI_Smoke_2026-08-27.md`)
 
 ## Safety
 
@@ -43,4 +43,6 @@ updated: 2026-08-27
 
 ## Release evidence
 
-Every checked box must link to a test result, fixture, report, or human-review record. Until then, this document remains a proposed checklist.
+Every checked box links to a test result, fixture, implementation file, or
+human-review record. The remaining unchecked items are provider-current,
+dataset-sharing, broader accessibility, and paper/live wording release gates.

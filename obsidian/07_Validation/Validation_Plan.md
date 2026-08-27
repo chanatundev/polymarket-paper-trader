@@ -41,6 +41,18 @@ updated: 2026-08-27
 - GUI routes are GET-only, make no provider calls, accept no credentials, and do not mutate SQLite;
 - GUI output escapes stored text and remains keyboard-navigable with status meaning that is not color-only.
 
+## Phase 5 local GUI evidence
+
+The implemented GUI slice is covered by [[GUI_Smoke_2026-08-27|the 2026-08-27
+smoke review]] and `tests/test_history_gui.py`. The tests seed canonical fills
+and compatible legacy trades, verify the bounded normalized list/detail view,
+exercise filters and cursor pagination, prove immutable SQLite reads and no
+database creation for missing stores, reject write-like methods, and assert
+that stored text is inserted through `textContent` rather than HTML parsing.
+The browser review checked the persistent safety banner, detail sections,
+empty/clear filter states, responsive layout, keyboard-focusable row controls,
+and text status cues.
+
 ## External and human gates
 
 - Verify current provider behavior with bounded read-only requests immediately before release.

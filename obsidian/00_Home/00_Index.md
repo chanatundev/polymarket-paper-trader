@@ -1,7 +1,7 @@
 ---
 type: project-index
 project: polymarket-paper-trader
-status: core-complete-gui-planned
+status: phase-5-gui-implemented-pending-release-gates
 updated: 2026-08-27
 links:
   - "[[300_Maps/coding|Coding]]"
@@ -10,7 +10,7 @@ links:
 
 # Polymarket Paper Trader
 
-An agent-first, paper-only research and simulation workbench for Polymarket. The project keeps the useful CLI/MCP surface of the source repository while updating its market-data, order-book, fee, and execution models for current Polymarket behavior. A lightweight local browser GUI is planned for reviewing stored paper trades.
+An agent-first, paper-only research and simulation workbench for Polymarket. The project keeps the useful CLI/MCP surface of the source repository while updating its market-data, order-book, fee, and execution models for current Polymarket behavior. A lightweight local browser GUI is implemented for reviewing stored paper trades.
 
 ## Start here
 
@@ -44,4 +44,4 @@ Keep the V2-aware simulator and research tool paper-only, and add a loopback-onl
 
 ## Evidence boundary
 
-The core successor implementation exists in the selected checkout and its local evidence is recorded in the root `IMPLEMENTATION.md`. The GUI remains planned until its implementation and validation gates are complete. This knowledge base does not claim that live providers will remain stable or that paper results predict real-world profitability.
+The core successor implementation and Phase 5 GUI exist in the selected checkout; local evidence is recorded in the root `IMPLEMENTATION.md` and [[../07_Validation/GUI_Smoke_2026-08-27|GUI smoke review]]. Provider-current, dataset-sharing, broader accessibility, and human paper/live review gates remain open. This knowledge base does not claim that live providers will remain stable or that paper results predict real-world profitability.

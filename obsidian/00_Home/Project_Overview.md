@@ -1,7 +1,7 @@
 ---
 type: project-overview
 project: polymarket-paper-trader
-status: core-complete-gui-planned
+status: phase-5-gui-implemented-pending-release-gates
 updated: 2026-08-27
 ---
 
@@ -22,7 +22,7 @@ Create a safer and more faithful successor to [agent-next/polymarket-paper-trade
 
 ## Current state
 
-The successor core is implemented in the selected checkout; the local trade-history GUI described in this update is the next unimplemented slice. The original source audit found compatibility and fidelity gaps against current Polymarket documentation and live public responses:
+The successor core and the local trade-history GUI are implemented in the selected checkout. The original source audit found compatibility and fidelity gaps against current Polymarket documentation and live public responses:
 
 - current Gamma uses `/markets/keyset`, `/events/slug/{slug}`, and `public-search` capabilities that are not represented by the existing adapters;
 - current market metadata exposes `feeSchedule`, `feesEnabled`, order minimums, tick sizes, and trading-state fields that the source model largely drops;

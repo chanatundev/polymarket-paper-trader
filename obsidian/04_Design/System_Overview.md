@@ -1,7 +1,7 @@
 ---
 type: system-design
 project: polymarket-paper-trader
-status: proposed
+status: implemented
 updated: 2026-08-27
 ---
 
@@ -73,9 +73,9 @@ Retain the source's agent-facing interfaces but return structured envelopes cont
 
 The approved Phase 5 GUI is a small browser surface for human inspection of data already persisted by the paper workflows. It is not a second trading client.
 
-- A planned `TradeHistoryReader`/query service exposes bounded list and detail records rather than letting the UI issue SQL directly. It joins canonical `fills`, `orders`, `order_events`, `ledger_entries`, `simulation_runs`, and `reports`, and can read compatible legacy `trades` rows through the same view model.
+- The `TradeHistoryReader` query service exposes bounded list and detail records rather than letting the UI issue SQL directly. It joins canonical `fills`, `orders`, `order_events`, `ledger_entries`, `simulation_runs`, and `reports`, and can read compatible legacy `trades` rows through the same view model.
 - The list is newest-first and supports a small allow-listed set of filters such as run, market, outcome, side, status, and text search. The detail view shows available market/order/fill/accounting fields plus provenance, timestamps, model versions, queue/latency assumptions, warnings, and unknown-value reasons.
-- A planned local server serves static HTML/CSS/JavaScript and JSON `GET` routes from the selected data directory. It binds to `127.0.0.1` by default, applies the existing page/response bounds, and does not instantiate provider adapters or any write-capable workflow.
+- The local server serves static HTML/CSS/JavaScript and JSON `GET` routes from the selected data directory. It binds to `127.0.0.1` by default, applies the existing page/response bounds, opens SQLite in immutable read-only mode, and does not instantiate provider adapters or any write-capable workflow.
 - The GUI must display a persistent paper-only/read-only notice and make it clear that a paper fill is a model output. It has no create, edit, cancel, submit, sign, redeem, credential, or fund-control interaction.
 
 Detailed layout, record shape, route contract, and validation gates are in [[Trade_History_GUI|Trade-history GUI]].

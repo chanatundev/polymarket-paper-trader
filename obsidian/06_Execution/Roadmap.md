@@ -44,13 +44,19 @@ Improve CLI/MCP operations, structured explanations, compact reports, and exampl
 
 **Exit:** an agent can discover, inspect, simulate, replay, and explain a run without reading internal SQLite tables.
 
-## Phase 5 — Local trade-history GUI
+## Phase 5 — Local trade-history GUI (implemented)
 
 Implement the approved lightweight GUI for reviewing stored canonical paper fills and compatible legacy trades. Add a bounded read model/query service, friendly metadata enrichment where the canonical record lacks market labels, a loopback-only static browser surface, and a `pm-trader gui` launch path. Keep the GUI strictly read-only and local.
 
 **Depends on:** Phases 0–4, [[../09_Decisions/Decision_Log|Decision D-005]], and the [[../04_Design/Trade_History_GUI|GUI design]].
 
-**Exit:** a seeded SQLite store can be opened through the GUI; a reviewer can filter and select a past trade; detail shows available order/fill/ledger/report/provenance/assumption data; bounds, empty/error states, keyboard access, and no-write/no-provider behavior are tested.
+**Exit:** met for the local implementation. A seeded SQLite store can be opened
+through the GUI; a reviewer can filter and select a past trade; detail shows
+available order/fill/ledger/report/provenance/assumption data; bounds,
+empty/error states, keyboard access, and no-write/no-provider behavior are
+tested. Evidence: [[../07_Validation/GUI_Smoke_2026-08-27|GUI smoke review]] and
+`tests/test_history_gui.py`. Provider-current, sharing, and broader human
+review gates remain separate.
 
 ## Phase 6 — Optional live read-only operations
 
