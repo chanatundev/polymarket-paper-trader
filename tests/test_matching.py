@@ -60,6 +60,22 @@ def test_open_order_can_be_cancelled_without_live_side_effects(market):
     assert result.decision.assumptions["paper_only"] is True
 
 
+def test_gtd_expiry_is_explicit(market, book):
+    result = PaperMatcher().match_order(
+        market,
+        book,
+        order(
+            market,
+            tif="gtd",
+            price="0.67",
+            size="10",
+            expires_at="2026-08-26T20:00:10Z",
+        ),
+    )
+    assert result.order.status == "expired"
+    assert result.decision.reason_code == "EXPIRED"
+
+
 def test_post_only_crossing_order_is_rejected(market, book):
     result = PaperMatcher().match_order(
         market, book, order(market, tif="gtc", price="0.67", size="10", post_only=True)

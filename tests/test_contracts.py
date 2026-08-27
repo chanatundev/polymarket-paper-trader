@@ -13,8 +13,15 @@ from pm_trader.api import (
     DataAdapter,
     FixtureTransport,
     GammaAdapter,
+    TransportResponse,
 )
-from pm_trader.errors import LocalValidationError, MalformedPayloadError, RateLimitError
+from pm_trader.errors import (
+    LocalValidationError,
+    MalformedPayloadError,
+    NetworkProviderError,
+    ProviderRejectedError,
+    RateLimitError,
+)
 from pm_trader.normalizers import normalize_book, normalize_market
 
 ROOT = Path(__file__).parents[1]
@@ -149,9 +156,19 @@ def test_price_history_and_public_context_are_bounded_and_non_executable():
 
 
 def test_http_429_is_distinguishable():
-    transport = FixtureTransport({f"{GAMMA_BASE}/markets/keyset": type("Response", (), {})()})
-    transport.responses[f"{GAMMA_BASE}/markets/keyset"] = __import__(
-        "pm_trader.api", fromlist=["TransportResponse"]
-    ).TransportResponse(429, {"message": "slow down"})
+    transport = FixtureTransport(
+        {f"{GAMMA_BASE}/markets/keyset": TransportResponse(429, {"message": "slow down"})}
+    )
     with pytest.raises(RateLimitError):
         GammaAdapter(transport=transport).list_markets()
+
+
+def test_http_network_and_provider_rejection_are_distinguishable():
+    with pytest.raises(NetworkProviderError):
+        GammaAdapter(transport=FixtureTransport({})).list_markets()
+
+    rejected = FixtureTransport(
+        {f"{GAMMA_BASE}/markets/keyset": TransportResponse(403, {"message": "forbidden"})}
+    )
+    with pytest.raises(ProviderRejectedError):
+        GammaAdapter(transport=rejected).list_markets()
