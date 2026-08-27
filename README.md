@@ -17,14 +17,20 @@ No package in this repository creates, signs, submits, cancels, or redeems live 
 ## Quick start
 
 ```bash
-python -m pm_trader inspect market --fixture fixtures/gamma_markets_keyset_page1.json
-python -m pm_trader simulate \
+uv run python -m pm_trader inspect market --fixture fixtures/gamma_markets_keyset_page1.json
+uv run python -m pm_trader simulate \
   --market-fixture fixtures/gamma_markets_keyset_page1.json \
   --book-fixture fixtures/clob_book.json \
   --price 0.67 --size 40 --tif fak
 ```
 
 The CLI returns bounded structured envelopes with `result`, `warnings`, `freshness`, `provenance_ids`, `assumptions`, and `errors`.
+
+Run the complete offline discovery-to-replay example with:
+
+```bash
+uv run python -m examples.discovery_to_replay
+```
 
 ## Validation
 
