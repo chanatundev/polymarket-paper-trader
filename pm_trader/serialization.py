@@ -12,9 +12,8 @@ from decimal import Decimal
 from enum import Enum
 from typing import Any
 
-
 _SENSITIVE_KEY = re.compile(
-    r"(?:private.?key|secret|password|authorization|api.?key|signature|mnemonic|wallet|proxywallet|allowance|credential)",
+    r"(?:private.?key|secret|password|authorization|api.?key|signature|mnemonic|wallet|proxywallet|allowance|credential|address$|(?:maker|taker|owner|user)(?:_address)?$)",
     re.IGNORECASE,
 )
 

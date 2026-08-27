@@ -3,15 +3,14 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from math import isfinite
 from typing import Any
 
 from .errors import LocalValidationError
 
-
-ZERO = Decimal("0")
-ONE = Decimal("1")
+ZERO = Decimal(0)
+ONE = Decimal(1)
 
 
 def decimal(value: Any, *, field: str = "value") -> Decimal:
@@ -21,7 +20,9 @@ def decimal(value: Any, *, field: str = "value") -> Decimal:
     try:
         result = Decimal(str(value))
     except (InvalidOperation, ValueError) as exc:
-        raise LocalValidationError(f"{field} must be a finite number", details={"field": field}) from exc
+        raise LocalValidationError(
+            f"{field} must be a finite number", details={"field": field}
+        ) from exc
     if not result.is_finite():
         raise LocalValidationError(f"{field} must be finite", details={"field": field})
     return result
@@ -69,7 +70,9 @@ def parse_timestamp(value: Any, *, field: str = "timestamp") -> str:
         try:
             number = float(value)
         except ValueError as exc:
-            raise LocalValidationError(f"{field} must be a timestamp", details={"field": field}) from exc
+            raise LocalValidationError(
+                f"{field} must be a timestamp", details={"field": field}
+            ) from exc
         if not isfinite(number):
             raise LocalValidationError(f"{field} must be finite", details={"field": field})
         return str(value)
@@ -82,11 +85,13 @@ def parse_timestamp(value: Any, *, field: str = "timestamp") -> str:
         else:
             datetime.fromisoformat(text.replace("Z", "+00:00"))
     except ValueError as exc:
-        raise LocalValidationError(f"{field} must be ISO-8601 or Unix seconds", details={"field": field}) from exc
+        raise LocalValidationError(
+            f"{field} must be ISO-8601 or Unix seconds", details={"field": field}
+        ) from exc
     return text
 
 
-def timestamp_seconds(value: str | int | float | Decimal) -> float:
+def timestamp_seconds(value: str | float | Decimal) -> float:
     if isinstance(value, str):
         text = value.strip()
         try:

@@ -6,11 +6,16 @@ from pathlib import Path
 
 import pytest
 
-from pm_trader.api import CLOB_BASE, GAMMA_BASE, CLOBAdapter, FixtureTransport, GammaAdapter
+from pm_trader.api import (
+    CLOB_BASE,
+    GAMMA_BASE,
+    CLOBAdapter,
+    DataAdapter,
+    FixtureTransport,
+    GammaAdapter,
+)
 from pm_trader.errors import LocalValidationError, MalformedPayloadError, RateLimitError
-from pm_trader.models import Freshness
 from pm_trader.normalizers import normalize_book, normalize_market
-
 
 ROOT = Path(__file__).parents[1]
 
@@ -52,7 +57,7 @@ def test_current_book_normalization_preserves_identity_and_freshness_fields():
     assert book.market_id == "0xgeneral-event-001"
     assert book.asset_id == "token-general-yes"
     assert book.book_hash == "book-hash-general-001"
-    assert book.min_order_size == Decimal("5")
+    assert book.min_order_size == Decimal(5)
     assert book.tick_size == Decimal("0.01")
     assert book.neg_risk is False
     assert book.last_trade_price == Decimal("0.65")
@@ -67,9 +72,11 @@ def test_invalid_book_level_is_malformed():
 
 
 def test_keyset_pagination_uses_cursor_and_rejects_offset():
-    transport = FixtureTransport({
-        f"{GAMMA_BASE}/markets/keyset": fixture("gamma_markets_keyset_page1.json"),
-    })
+    transport = FixtureTransport(
+        {
+            f"{GAMMA_BASE}/markets/keyset": fixture("gamma_markets_keyset_page1.json"),
+        }
+    )
     adapter = GammaAdapter(transport=transport, clock=lambda: "2026-08-26T20:00:20Z")
     page = adapter.list_markets(limit=1)
     assert page.next_cursor == "fixture-cursor-page-2"
@@ -80,7 +87,9 @@ def test_keyset_pagination_uses_cursor_and_rejects_offset():
 
 
 def test_event_search_and_fee_routes_are_current():
-    search_transport = FixtureTransport({f"{GAMMA_BASE}/public-search": fixture("gamma_public_search.json")})
+    search_transport = FixtureTransport(
+        {f"{GAMMA_BASE}/public-search": fixture("gamma_public_search.json")}
+    )
     search = GammaAdapter(transport=search_transport).search("example")
     assert search.markets[0].condition_id == "0xgeneral-event-001"
     assert search.pagination["hasMore"] is False
@@ -92,8 +101,52 @@ def test_event_search_and_fee_routes_are_current():
     assert fee.schedule.version == "legacy-base-fee-bps"
 
 
+def test_event_by_slug_uses_versioned_slug_route_and_clob_market_info_normalizes():
+    event_transport = FixtureTransport(
+        {f"{GAMMA_BASE}/events/slug/example-general-event": fixture("gamma_event_by_slug.json")}
+    )
+    event = GammaAdapter(transport=event_transport).event_by_slug("example-general-event")
+    assert event.event["id"] == "event-general-001"
+    assert event.markets[0].event_slug == "example-general-event"
+    assert event_transport.requests[0][0].endswith("/events/slug/example-general-event")
+
+    clob_transport = FixtureTransport(
+        {f"{CLOB_BASE}/markets/0xgeneral-event-001": fixture("clob_market_info.json")}
+    )
+    info = CLOBAdapter(transport=clob_transport).get_market_info("0xgeneral-event-001")
+    assert info.value.tick_size == Decimal("0.01")
+    assert info.value.tokens[1].token_id == "token-general-no"
+
+
+def test_price_history_and_public_context_are_bounded_and_non_executable():
+    history_transport = FixtureTransport(
+        {f"{CLOB_BASE}/prices-history": fixture("clob_price_history.json")}
+    )
+    history = CLOBAdapter(transport=history_transport).get_price_history(
+        "token-general-yes", interval="1h", fidelity=60
+    )
+    assert len(history.value) == 3
+    assert history.value[0].price == Decimal("0.61")
+    assert history_transport.requests[0][1]["market"] == "token-general-yes"
+
+    data_transport = FixtureTransport(
+        {
+            "https://data.example/activity": {
+                "activity": [{"type": "trade", "user": "0xwallet", "size": "1"}]
+            }
+        }
+    )
+    context = DataAdapter(transport=data_transport, base_url="https://data.example").public_context(
+        "activity", path="/activity"
+    )
+    assert context.value.executable is False
+    assert context.value.records[0]["user"] == "[REDACTED]"
+
+
 def test_http_429_is_distinguishable():
     transport = FixtureTransport({f"{GAMMA_BASE}/markets/keyset": type("Response", (), {})()})
-    transport.responses[f"{GAMMA_BASE}/markets/keyset"] = __import__("pm_trader.api", fromlist=["TransportResponse"]).TransportResponse(429, {"message": "slow down"})
+    transport.responses[f"{GAMMA_BASE}/markets/keyset"] = __import__(
+        "pm_trader.api", fromlist=["TransportResponse"]
+    ).TransportResponse(429, {"message": "slow down"})
     with pytest.raises(RateLimitError):
         GammaAdapter(transport=transport).list_markets()

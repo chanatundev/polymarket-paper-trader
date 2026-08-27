@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
 
 from pm_trader.workflows import load_book_fixture, load_market_fixture
-
 
 ROOT = Path(__file__).parents[1]
 
