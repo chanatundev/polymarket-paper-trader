@@ -26,6 +26,9 @@ uv run python -m pm_trader simulate \
 
 The CLI returns bounded structured envelopes with `result`, `warnings`, `freshness`, `provenance_ids`, `assumptions`, and `errors`.
 
+See the [CLI guide](docs/CLI.md) for the complete command reference, offline
+fixtures, replay preparation, output contract, and safety boundaries.
+
 Run the complete offline discovery-to-replay example with:
 
 ```bash
