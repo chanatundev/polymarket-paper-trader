@@ -140,6 +140,42 @@ def test_event_search_and_fee_routes_are_current():
     assert fee.schedule.version == "legacy-base-fee-bps"
 
 
+def test_clob_base_fee_enables_fees_without_a_fees_enabled_flag():
+    value = fixture("clob_market_info.json")
+    value.pop("fees_enabled")
+    value.pop("fee_schedule")
+    value["maker_base_fee"] = 0
+    value["taker_base_fee"] = 1000
+    market = normalize_market(value, provider="clob", endpoint="/markets/{condition_id}")
+    assert market.fees_enabled is True
+    assert market.fee_schedule is not None
+    assert market.fee_schedule.rate == Decimal("0.1")
+    assert market.fee_schedule.version == "legacy-base-fee-bps"
+    assert "fees_enabled" not in market.unknown_reasons
+    assert "taker_base_fee" not in market.unknown_fields
+    assert "maker_base_fee" not in market.unknown_fields
+
+
+def test_explicit_zero_clob_base_fee_is_fee_free():
+    value = fixture("clob_market_info.json")
+    value.pop("fees_enabled")
+    value.pop("fee_schedule")
+    value["maker_base_fee"] = 0
+    value["taker_base_fee"] = 0
+    market = normalize_market(value, provider="clob", endpoint="/markets/{condition_id}")
+    assert market.fees_enabled is False
+    assert "fees_enabled" not in market.unknown_reasons
+
+
+def test_explicit_fees_enabled_flag_wins_over_base_fee():
+    value = fixture("clob_market_info.json")
+    value.pop("fee_schedule")
+    value["fees_enabled"] = False
+    value["taker_base_fee"] = 1000
+    market = normalize_market(value, provider="clob", endpoint="/markets/{condition_id}")
+    assert market.fees_enabled is False
+
+
 def test_clob_market_info_reads_end_date_iso():
     value = fixture("clob_market_info.json")
     value["end_date_iso"] = "2027-01-01T00:00:00Z"
