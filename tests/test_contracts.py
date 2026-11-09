@@ -44,6 +44,33 @@ def test_current_market_normalization_preserves_required_fields_and_unknowns():
     assert market.unknown_fields["fixtureVersion"] == "gamma-2026-08-26-v1"
 
 
+def test_market_end_time_stays_separate_from_provider_timestamp():
+    value = fixture("gamma_markets_keyset_page1.json")["markets"][0]
+    market = normalize_market(value)
+    assert market.end_time == "2030-12-31T23:59:59Z"
+    assert market.provider_timestamp == "2026-08-26T20:00:00Z"
+    assert market.start_time is None
+    assert "start_time" in market.unknown_reasons
+    assert "endDateIso" not in market.unknown_fields
+
+
+def test_end_date_without_updated_at_is_not_used_as_provider_timestamp():
+    value = fixture("gamma_markets_keyset_page1.json")["markets"][0]
+    value.pop("updatedAt")
+    market = normalize_market(value)
+    assert market.end_time == "2030-12-31T23:59:59Z"
+    assert market.provider_timestamp is None
+    assert "provider_timestamp" in market.unknown_reasons
+
+
+def test_start_date_is_a_canonical_start_time():
+    value = fixture("gamma_markets_keyset_page1.json")["markets"][0]
+    value["startDateIso"] = "2026-01-01T00:00:00Z"
+    market = normalize_market(value)
+    assert market.start_time == "2026-01-01T00:00:00Z"
+    assert "start_time" not in market.unknown_reasons
+
+
 @pytest.mark.parametrize("field", ["conditionId", "slug", "question", "outcomes", "clobTokenIds"])
 def test_required_market_fields_fail_closed(field):
     value = fixture("gamma_markets_keyset_page1.json")["markets"][0]

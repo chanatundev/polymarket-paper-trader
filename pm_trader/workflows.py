@@ -26,6 +26,32 @@ def as_jsonable(value: Any) -> Any:
         return sanitize(value)
 
 
+def scan_market(market: MarketState) -> dict[str, Any]:
+    """Discovery row small enough to scan a page. Inspect still returns the full record."""
+
+    reasons = {
+        key: market.unknown_reasons[key]
+        for key in ("start_time", "end_time")
+        if key in market.unknown_reasons
+    }
+    row: dict[str, Any] = {
+        "condition_id": market.condition_id,
+        "slug": market.slug,
+        "question": market.question,
+        "start_time": market.start_time,
+        "end_time": market.end_time,
+        "active": market.active,
+        "closed": market.closed,
+        "accepting_orders": market.accepting_orders,
+        "enable_order_book": market.enable_order_book,
+        "freshness": market.freshness.value,
+        "provenance_id": market.provenance.observation_id if market.provenance else None,
+    }
+    if reasons:
+        row["unknown_reasons"] = reasons
+    return row
+
+
 def envelope(
     *,
     result: Any = None,
@@ -66,7 +92,7 @@ class ResearchService:
             return envelope(
                 result={
                     "query": query,
-                    "markets": found.markets,
+                    "markets": [scan_market(market) for market in found.markets],
                     "events": found.events,
                     "tags": found.tags,
                     "profiles": found.profiles,
@@ -79,7 +105,7 @@ class ResearchService:
         page = self.gamma.list_markets(limit=limit, after_cursor=cursor)
         return envelope(
             result={
-                "markets": page.items,
+                "markets": [scan_market(market) for market in page.items],
                 "next_cursor": page.next_cursor,
                 "query": page.query,
                 "response_metadata": page.response_metadata,

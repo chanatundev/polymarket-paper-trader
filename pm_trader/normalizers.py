@@ -145,6 +145,30 @@ def _optional_decimal(
     return result
 
 
+def _optional_timestamp(
+    payload: Mapping[str, Any],
+    keys: tuple[str, ...],
+    *,
+    field: str,
+    unknown: dict[str, str],
+    provider: str,
+    endpoint: str,
+) -> tuple[str | None, str | None]:
+    value, source_field = _pick(payload, *keys)
+    if source_field is None or value is None or value == "":
+        unknown[field] = f"provider field unavailable ({'/'.join(keys)})"
+        return None, source_field
+    try:
+        return parse_timestamp(value, field=field), source_field
+    except LocalValidationError as exc:
+        raise MalformedPayloadError(
+            f"field {field} is invalid",
+            provider=provider,
+            endpoint=endpoint,
+            details={"field": field, "source_field": source_field, "value": sanitize(value)},
+        ) from exc
+
+
 def _optional_bool(
     payload: Mapping[str, Any],
     keys: tuple[str, ...],
@@ -485,8 +509,26 @@ def normalize_market(
         if key in raw
     )
 
+    start_time, start_field = _optional_timestamp(
+        raw,
+        ("startDateIso", "startDate", "start_date"),
+        field="start_time",
+        unknown=unknown,
+        provider=provider,
+        endpoint=endpoint,
+    )
+    end_time, end_field = _optional_timestamp(
+        raw,
+        ("endDateIso", "endDate", "end_date"),
+        field="end_time",
+        unknown=unknown,
+        provider=provider,
+        endpoint=endpoint,
+    )
+    consumed.update(key for key in (start_field, end_field) if key)
+
     provider_timestamp_value, provider_timestamp_field = _pick(
-        raw, "updatedAt", "updated_at", "endDateIso", "endDate", "timestamp"
+        raw, "updatedAt", "updated_at", "timestamp"
     )
     provider_timestamp = None
     if provider_timestamp_value is not None:
@@ -521,6 +563,10 @@ def normalize_market(
         "created_at",
         "startDate",
         "startDateIso",
+        "start_date",
+        "endDate",
+        "endDateIso",
+        "end_date",
         "volume",
         "volumeNum",
         "liquidity",
@@ -550,6 +596,8 @@ def normalize_market(
         fees_enabled=fees_enabled,
         fee_schedule=fee_schedule,
         category=str(category_value) if category_value is not None else None,
+        start_time=start_time,
+        end_time=end_time,
         provider_timestamp=provider_timestamp,
         observed_at=provenance.received_at if provenance else None,
         freshness=Freshness.UNKNOWN,

@@ -165,6 +165,8 @@ class MarketState:
     fees_enabled: bool | None = None
     fee_schedule: FeeSchedule | None = None
     category: str | None = None
+    start_time: str | None = None
+    end_time: str | None = None
     provider_timestamp: str | None = None
     observed_at: str | None = None
     freshness: Freshness = Freshness.UNKNOWN

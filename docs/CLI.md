@@ -134,7 +134,11 @@ uv run python -m pm_trader discover \
   --limit 1
 ```
 
-`--limit` is bounded to 100 for keyset pages.
+`--limit` is bounded to 100 for keyset pages. List and search results are scan
+rows: condition id, slug, question, start and end time, lifecycle flags,
+freshness, and provenance id. Missing start or end times stay null with an
+`unknown_reasons` entry. Use `inspect market` or `market get` for the full
+canonical record, including tokens, fees, and unknown provider fields.
 
 ### Search public markets
 
@@ -153,8 +157,8 @@ uv run python -m pm_trader discover \
   --limit 10
 ```
 
-The response preserves the query, normalized markets, events, tags, profiles,
-pagination metadata, and provenance ID. Search results are bounded to 50.
+The response preserves the query, scan rows, events, tags, profiles, pagination
+metadata, and provenance ID. Search results are bounded to 50.
 
 ### `market` aliases
 
@@ -323,13 +327,16 @@ For valid invocations, exit status has this meaning:
 
 | Exit status | Meaning |
 | --- | --- |
-| `0` | The requested workflow completed; inspect `ok`, `warnings`, and `errors`. |
-| `1` | The command could not return the requested stored result, such as a missing report. |
+| `0` | The workflow completed with `ok: true`. Warnings can still be present. |
+| `1` | The envelope is `ok: false`, including a missing report or a response that cannot fit the size cap. |
 | `2` | Provider, network, malformed-payload, or local-validation failure. |
 
 `--help` uses standard `argparse` text output. Execution responses remain JSON and
-are capped at 64 KiB. A response that would exceed the cap becomes a structured
-`RESPONSE_SIZE_LIMIT` error instead of being partially emitted.
+are capped at 64 KiB. A discovery page that does not fit returns the longest
+prefix that does, withholds `next_cursor`, and warns to retry with a smaller
+`--limit`. A response that still cannot fit becomes a structured
+`RESPONSE_SIZE_LIMIT` error and exits `1`. `safety` reports the paper-only
+boundary and does not create a data directory.
 
 Warnings are data, not decoration. In particular, review freshness, provenance
 IDs, assumptions, data coverage, and uncertainty before interpreting a fill or

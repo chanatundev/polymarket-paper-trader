@@ -22,6 +22,7 @@ from .workflows import (
     envelope,
     load_book_fixture,
     load_market_fixture,
+    scan_market,
 )
 
 
@@ -130,7 +131,11 @@ def _fixture_page(
         for event in events:
             markets.extend(event.get("markets", []) if isinstance(event, dict) else [])
         normalized = [
-            normalize_market(item, provenance=provenance, endpoint=str(path), provider="fixture")
+            scan_market(
+                normalize_market(
+                    item, provenance=provenance, endpoint=str(path), provider="fixture"
+                )
+            )
             for item in markets
         ]
         return envelope(
@@ -146,7 +151,9 @@ def _fixture_page(
         )
     market_payloads = raw.get("markets", []) if isinstance(raw, dict) else raw
     normalized = [
-        normalize_market(item, provenance=provenance, endpoint=str(path), provider="fixture")
+        scan_market(
+            normalize_market(item, provenance=provenance, endpoint=str(path), provider="fixture")
+        )
         for item in market_payloads
     ]
     return envelope(
@@ -194,21 +201,81 @@ def _gui_descriptor(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
     )
 
 
+def _safety_envelope() -> dict[str, Any]:
+    return envelope(
+        result={
+            "mode": "paper_only",
+            "live_writes": False,
+            "signing": False,
+            "cancellation": False,
+            "redemption": False,
+            "fund_movement": False,
+        },
+        assumptions={"authenticated_execution": "out_of_scope"},
+    )
+
+
+def _fit_market_page(payload: dict[str, Any], max_bytes: int) -> dict[str, Any] | None:
+    """Keep the longest market prefix that fits. A cut page withholds its cursor."""
+
+    result = payload.get("result")
+    markets = result.get("markets") if isinstance(result, dict) else None
+    if not isinstance(markets, list) or not markets:
+        return None
+    warning = "response truncated to the configured CLI size limit; retry with a smaller --limit"
+    best: dict[str, Any] | None = None
+    low = 1
+    high = len(markets) - 1
+    while low <= high:
+        mid = (low + high) // 2
+        candidate = {
+            **payload,
+            "warnings": [warning, *list(payload.get("warnings") or [])],
+            "result": {**result, "markets": markets[:mid]},
+        }
+        if "next_cursor" in candidate["result"]:
+            candidate["result"]["next_cursor"] = None
+        _text, truncated = bounded_json(candidate, max_bytes)
+        if not truncated:
+            best = candidate
+            low = mid + 1
+        else:
+            high = mid - 1
+    return best
+
+
+def finalize_cli_response(code: int, payload: dict[str, Any], *, max_bytes: int) -> tuple[int, str]:
+    """Serialize a CLI envelope under the byte cap. ``ok: false`` never exits 0."""
+
+    _encoded, truncated = bounded_json(payload, max_bytes)
+    if truncated:
+        fitted = _fit_market_page(payload, max_bytes)
+        if fitted is None:
+            payload = envelope(
+                result=None,
+                errors=(
+                    {
+                        "code": "RESPONSE_SIZE_LIMIT",
+                        "message": (
+                            "response exceeded configured CLI size limit; retry with a smaller --limit"
+                        ),
+                    },
+                ),
+                ok=False,
+            )
+            code = max(code, 1)
+        else:
+            payload = fitted
+    if payload.get("ok") is False and code == 0:
+        code = 1
+    return code, canonical_json(payload)
+
+
 def _run_parsed(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
+    if args.command == "safety":
+        return 0, _safety_envelope()
     store = SQLiteStore(args.data_dir)
     try:
-        if args.command == "safety":
-            return 0, envelope(
-                result={
-                    "mode": "paper_only",
-                    "live_writes": False,
-                    "signing": False,
-                    "cancellation": False,
-                    "redemption": False,
-                    "fund_movement": False,
-                },
-                assumptions={"authenticated_execution": "out_of_scope"},
-            )
         if args.command == "discover":
             if args.fixture:
                 return 0, _fixture_page(
@@ -322,19 +389,8 @@ def main(argv: list[str] | None = None) -> None:
         serve_gui(args.data_dir, port=args.port, open_browser=args.open_browser)
         return
     code, payload = _run_parsed(args)
-    encoded, truncated = bounded_json(payload, ResourceLimits().max_response_bytes)
-    if truncated:
-        encoded = canonical_json(
-            envelope(
-                result=None,
-                errors=(
-                    {
-                        "code": "RESPONSE_SIZE_LIMIT",
-                        "message": "response exceeded configured CLI size limit",
-                    },
-                ),
-                ok=False,
-            )
-        )
+    exit_code, encoded = finalize_cli_response(
+        code, payload, max_bytes=ResourceLimits().max_response_bytes
+    )
     sys.stdout.write(encoded + "\n")
-    raise SystemExit(code)
+    raise SystemExit(exit_code)
