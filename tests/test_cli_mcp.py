@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from pm_trader.cli import run
+import pytest
+
+from pm_trader.cli import main, run
 from pm_trader.mcp_server import dispatch_tool, handle_request
 
 ROOT = Path(__file__).parents[1]
@@ -109,7 +111,8 @@ def test_cli_market_alias_and_mcp_portfolio_report(tmp_path: Path):
 
 
 def test_safety_command_reports_no_live_capabilities(tmp_path: Path):
-    code, payload = run(["--data-dir", str(tmp_path / "safety-db"), "safety"])
+    data_dir = tmp_path / "safety-db"
+    code, payload = run(["--data-dir", str(data_dir), "safety"])
     assert code == 0
     assert payload["result"] == {
         "mode": "paper_only",
@@ -119,3 +122,110 @@ def test_safety_command_reports_no_live_capabilities(tmp_path: Path):
         "redemption": False,
         "fund_movement": False,
     }
+    assert not data_dir.exists()
+
+
+def _keyset_page(markets: list[dict]) -> dict:
+    return {"markets": markets, "next_cursor": "fixture-cursor-page-2"}
+
+
+def _example_market(**overrides) -> dict:
+    market = json.loads((ROOT / "fixtures/gamma_markets_keyset_page1.json").read_text())["markets"][
+        0
+    ]
+    market.update(overrides)
+    return market
+
+
+def test_discover_page_of_100_is_a_compact_scan(tmp_path: Path, capsys):
+    markets = [
+        _example_market(
+            conditionId=f"0x{index:064x}",
+            slug=f"will-event-{index}-happen-before-the-deadline",
+            question=f"Will event {index} happen before the stated deadline in this example market?",
+        )
+        for index in range(100)
+    ]
+    fixture_path = tmp_path / "page100.json"
+    fixture_path.write_text(json.dumps(_keyset_page(markets)), encoding="utf-8")
+    with pytest.raises(SystemExit) as caught:
+        main(
+            [
+                "--data-dir",
+                str(tmp_path / "db"),
+                "discover",
+                "--fixture",
+                str(fixture_path),
+                "--limit",
+                "100",
+            ]
+        )
+    assert caught.value.code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert len(payload["result"]["markets"]) == 100
+    first = payload["result"]["markets"][0]
+    assert first["condition_id"] == f"0x{0:064x}"
+    assert first["end_time"] == "2030-12-31T23:59:59Z"
+    assert first["slug"].startswith("will-event-0-")
+    assert "unknown_fields" not in first
+    assert "fee_schedule" not in first
+    assert "tokens" not in first
+    assert payload["result"]["next_cursor"] == "fixture-cursor-page-2"
+
+
+def test_discover_keeps_a_fitting_prefix_when_one_market_is_too_large(tmp_path: Path, capsys):
+    markets = [
+        _example_market(conditionId="0xsmall", slug="small-market", question="small"),
+        _example_market(conditionId="0xfat", slug="fat-market", question="Q" * 70_000),
+    ]
+    fixture_path = tmp_path / "mixed.json"
+    fixture_path.write_text(json.dumps(_keyset_page(markets)), encoding="utf-8")
+    with pytest.raises(SystemExit) as caught:
+        main(
+            [
+                "--data-dir",
+                str(tmp_path / "db"),
+                "discover",
+                "--fixture",
+                str(fixture_path),
+                "--limit",
+                "2",
+            ]
+        )
+    assert caught.value.code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert [item["condition_id"] for item in payload["result"]["markets"]] == ["0xsmall"]
+    assert payload["result"]["next_cursor"] is None
+    assert payload["warnings"]
+    assert "smaller --limit" in payload["warnings"][0]
+
+
+def test_discover_exits_nonzero_when_nothing_fits(tmp_path: Path, capsys):
+    fixture_path = tmp_path / "fat.json"
+    fixture_path.write_text(
+        json.dumps(
+            _keyset_page(
+                [_example_market(conditionId="0xfat", slug="fat-market", question="Q" * 70_000)]
+            )
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(SystemExit) as caught:
+        main(
+            [
+                "--data-dir",
+                str(tmp_path / "db"),
+                "discover",
+                "--fixture",
+                str(fixture_path),
+                "--limit",
+                "1",
+            ]
+        )
+    assert caught.value.code == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert payload["result"] is None
+    assert payload["errors"][0]["code"] == "RESPONSE_SIZE_LIMIT"

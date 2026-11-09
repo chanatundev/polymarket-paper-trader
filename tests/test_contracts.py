@@ -44,6 +44,33 @@ def test_current_market_normalization_preserves_required_fields_and_unknowns():
     assert market.unknown_fields["fixtureVersion"] == "gamma-2026-08-26-v1"
 
 
+def test_market_end_time_stays_separate_from_provider_timestamp():
+    value = fixture("gamma_markets_keyset_page1.json")["markets"][0]
+    market = normalize_market(value)
+    assert market.end_time == "2030-12-31T23:59:59Z"
+    assert market.provider_timestamp == "2026-08-26T20:00:00Z"
+    assert market.start_time is None
+    assert "start_time" in market.unknown_reasons
+    assert "endDateIso" not in market.unknown_fields
+
+
+def test_end_date_without_updated_at_is_not_used_as_provider_timestamp():
+    value = fixture("gamma_markets_keyset_page1.json")["markets"][0]
+    value.pop("updatedAt")
+    market = normalize_market(value)
+    assert market.end_time == "2030-12-31T23:59:59Z"
+    assert market.provider_timestamp is None
+    assert "provider_timestamp" in market.unknown_reasons
+
+
+def test_start_date_is_a_canonical_start_time():
+    value = fixture("gamma_markets_keyset_page1.json")["markets"][0]
+    value["startDateIso"] = "2026-01-01T00:00:00Z"
+    market = normalize_market(value)
+    assert market.start_time == "2026-01-01T00:00:00Z"
+    assert "start_time" not in market.unknown_reasons
+
+
 @pytest.mark.parametrize("field", ["conditionId", "slug", "question", "outcomes", "clobTokenIds"])
 def test_required_market_fields_fail_closed(field):
     value = fixture("gamma_markets_keyset_page1.json")["markets"][0]
@@ -111,6 +138,54 @@ def test_event_search_and_fee_routes_are_current():
     fee = CLOBAdapter(transport=fee_transport).get_fee_rate("token-general-yes")
     assert fee.base_fee_bps == 500
     assert fee.schedule.version == "legacy-base-fee-bps"
+
+
+def test_clob_base_fee_enables_fees_without_a_fees_enabled_flag():
+    value = fixture("clob_market_info.json")
+    value.pop("fees_enabled")
+    value.pop("fee_schedule")
+    value["maker_base_fee"] = 0
+    value["taker_base_fee"] = 1000
+    market = normalize_market(value, provider="clob", endpoint="/markets/{condition_id}")
+    assert market.fees_enabled is True
+    assert market.fee_schedule is not None
+    assert market.fee_schedule.rate == Decimal("0.1")
+    assert market.fee_schedule.version == "legacy-base-fee-bps"
+    assert "fees_enabled" not in market.unknown_reasons
+    assert "taker_base_fee" not in market.unknown_fields
+    assert "maker_base_fee" not in market.unknown_fields
+
+
+def test_explicit_zero_clob_base_fee_is_fee_free():
+    value = fixture("clob_market_info.json")
+    value.pop("fees_enabled")
+    value.pop("fee_schedule")
+    value["maker_base_fee"] = 0
+    value["taker_base_fee"] = 0
+    market = normalize_market(value, provider="clob", endpoint="/markets/{condition_id}")
+    assert market.fees_enabled is False
+    assert "fees_enabled" not in market.unknown_reasons
+
+
+def test_explicit_fees_enabled_flag_wins_over_base_fee():
+    value = fixture("clob_market_info.json")
+    value.pop("fee_schedule")
+    value["fees_enabled"] = False
+    value["taker_base_fee"] = 1000
+    market = normalize_market(value, provider="clob", endpoint="/markets/{condition_id}")
+    assert market.fees_enabled is False
+
+
+def test_clob_market_info_reads_end_date_iso():
+    value = fixture("clob_market_info.json")
+    value["end_date_iso"] = "2027-01-01T00:00:00Z"
+    value["game_start_time"] = "2025-07-03T00:00:00Z"
+    transport = FixtureTransport({f"{CLOB_BASE}/markets/0xgeneral-event-001": value})
+    info = CLOBAdapter(transport=transport).get_market_info("0xgeneral-event-001")
+    assert info.value.end_time == "2027-01-01T00:00:00Z"
+    assert info.value.start_time == "2025-07-03T00:00:00Z"
+    assert "end_date_iso" not in info.value.unknown_fields
+    assert "game_start_time" not in info.value.unknown_fields
 
 
 def test_event_by_slug_uses_versioned_slug_route_and_clob_market_info_normalizes():

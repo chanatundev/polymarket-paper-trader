@@ -25,6 +25,15 @@ from .precision import decimal, non_negative, parse_bool, parse_timestamp, proba
 from .serialization import sanitize, sha256_json
 
 CANONICAL_SCHEMA_VERSION = "canonical-v1"
+_LEGACY_FEE_FIELDS = (
+    "base_fee",
+    "fee_rate_bps",
+    "feeRateBps",
+    "taker_base_fee",
+    "takerBaseFee",
+    "maker_base_fee",
+    "makerBaseFee",
+)
 GAMMA_SCHEMA_VERSION = "gamma-public-2026-08"
 CLOB_SCHEMA_VERSION = "clob-public-2026-08"
 WS_SCHEMA_VERSION = "clob-market-ws-2026-08"
@@ -145,6 +154,30 @@ def _optional_decimal(
     return result
 
 
+def _optional_timestamp(
+    payload: Mapping[str, Any],
+    keys: tuple[str, ...],
+    *,
+    field: str,
+    unknown: dict[str, str],
+    provider: str,
+    endpoint: str,
+) -> tuple[str | None, str | None]:
+    value, source_field = _pick(payload, *keys)
+    if source_field is None or value is None or value == "":
+        unknown[field] = f"provider field unavailable ({'/'.join(keys)})"
+        return None, source_field
+    try:
+        return parse_timestamp(value, field=field), source_field
+    except LocalValidationError as exc:
+        raise MalformedPayloadError(
+            f"field {field} is invalid",
+            provider=provider,
+            endpoint=endpoint,
+            details={"field": field, "source_field": source_field, "value": sanitize(value)},
+        ) from exc
+
+
 def _optional_bool(
     payload: Mapping[str, Any],
     keys: tuple[str, ...],
@@ -226,7 +259,7 @@ def normalize_fee_schedule(
                 raw=sanitize(payload),
             )
 
-        legacy_value, legacy_field = _pick(payload, "base_fee", "fee_rate_bps", "feeRateBps")
+        legacy_value, legacy_field = _pick(payload, *_LEGACY_FEE_FIELDS)
         if legacy_field is not None:
             try:
                 bps = non_negative(legacy_value, field=legacy_field)
@@ -432,6 +465,22 @@ def normalize_market(
         provider=provider,
         endpoint=endpoint,
     )
+    # CLOB market payloads declare maker/taker base fees and omit fees_enabled.
+    base_fee_value, base_fee_field = _pick(
+        raw, "taker_base_fee", "takerBaseFee", "maker_base_fee", "makerBaseFee"
+    )
+    if fees_enabled is None and base_fee_field is not None and base_fee_value not in (None, ""):
+        try:
+            base_fee_bps = non_negative(base_fee_value, field=base_fee_field)
+        except LocalValidationError as exc:
+            raise MalformedPayloadError(
+                "field fees_enabled cannot be inferred from an invalid base fee",
+                provider=provider,
+                endpoint=endpoint,
+                details={"field": base_fee_field, "value": sanitize(base_fee_value)},
+            ) from exc
+        fees_enabled = base_fee_bps > 0
+        unknown.pop("fees_enabled", None)
 
     min_size = _optional_decimal(
         raw,
@@ -469,24 +518,39 @@ def normalize_market(
     schedule_value, schedule_field = _pick(raw, "feeSchedule", "fee_schedule")
     if schedule_field is None:
         # An explicit legacy fee field is a compatibility shape, not a default.
-        schedule_value, schedule_field = _pick(raw, "base_fee", "fee_rate_bps", "feeRateBps")
+        schedule_value, schedule_field = _pick(raw, *_LEGACY_FEE_FIELDS)
     fee_schedule = normalize_fee_schedule(
         schedule_value
-        if schedule_field is not None
-        and schedule_field not in {"base_fee", "fee_rate_bps", "feeRateBps"}
+        if schedule_field is not None and schedule_field not in _LEGACY_FEE_FIELDS
         else (raw if schedule_field is not None else None),
         source=provider,
         endpoint=endpoint,
         unknown=unknown,
     )
     consumed.update(
-        key
-        for key in ("feeSchedule", "fee_schedule", "base_fee", "fee_rate_bps", "feeRateBps")
-        if key in raw
+        key for key in ("feeSchedule", "fee_schedule", *_LEGACY_FEE_FIELDS) if key in raw
     )
 
+    start_time, start_field = _optional_timestamp(
+        raw,
+        ("startDateIso", "startDate", "start_date_iso", "start_date", "game_start_time"),
+        field="start_time",
+        unknown=unknown,
+        provider=provider,
+        endpoint=endpoint,
+    )
+    end_time, end_field = _optional_timestamp(
+        raw,
+        ("endDateIso", "endDate", "end_date_iso", "end_date"),
+        field="end_time",
+        unknown=unknown,
+        provider=provider,
+        endpoint=endpoint,
+    )
+    consumed.update(key for key in (start_field, end_field) if key)
+
     provider_timestamp_value, provider_timestamp_field = _pick(
-        raw, "updatedAt", "updated_at", "endDateIso", "endDate", "timestamp"
+        raw, "updatedAt", "updated_at", "timestamp"
     )
     provider_timestamp = None
     if provider_timestamp_value is not None:
@@ -521,6 +585,13 @@ def normalize_market(
         "created_at",
         "startDate",
         "startDateIso",
+        "start_date",
+        "start_date_iso",
+        "game_start_time",
+        "endDate",
+        "endDateIso",
+        "end_date",
+        "end_date_iso",
         "volume",
         "volumeNum",
         "liquidity",
@@ -550,6 +621,8 @@ def normalize_market(
         fees_enabled=fees_enabled,
         fee_schedule=fee_schedule,
         category=str(category_value) if category_value is not None else None,
+        start_time=start_time,
+        end_time=end_time,
         provider_timestamp=provider_timestamp,
         observed_at=provenance.received_at if provenance else None,
         freshness=Freshness.UNKNOWN,
