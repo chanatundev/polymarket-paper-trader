@@ -511,7 +511,7 @@ def normalize_market(
 
     start_time, start_field = _optional_timestamp(
         raw,
-        ("startDateIso", "startDate", "start_date"),
+        ("startDateIso", "startDate", "start_date_iso", "start_date", "game_start_time"),
         field="start_time",
         unknown=unknown,
         provider=provider,
@@ -519,7 +519,7 @@ def normalize_market(
     )
     end_time, end_field = _optional_timestamp(
         raw,
-        ("endDateIso", "endDate", "end_date"),
+        ("endDateIso", "endDate", "end_date_iso", "end_date"),
         field="end_time",
         unknown=unknown,
         provider=provider,
@@ -564,9 +564,12 @@ def normalize_market(
         "startDate",
         "startDateIso",
         "start_date",
+        "start_date_iso",
+        "game_start_time",
         "endDate",
         "endDateIso",
         "end_date",
+        "end_date_iso",
         "volume",
         "volumeNum",
         "liquidity",

@@ -140,6 +140,18 @@ def test_event_search_and_fee_routes_are_current():
     assert fee.schedule.version == "legacy-base-fee-bps"
 
 
+def test_clob_market_info_reads_end_date_iso():
+    value = fixture("clob_market_info.json")
+    value["end_date_iso"] = "2027-01-01T00:00:00Z"
+    value["game_start_time"] = "2025-07-03T00:00:00Z"
+    transport = FixtureTransport({f"{CLOB_BASE}/markets/0xgeneral-event-001": value})
+    info = CLOBAdapter(transport=transport).get_market_info("0xgeneral-event-001")
+    assert info.value.end_time == "2027-01-01T00:00:00Z"
+    assert info.value.start_time == "2025-07-03T00:00:00Z"
+    assert "end_date_iso" not in info.value.unknown_fields
+    assert "game_start_time" not in info.value.unknown_fields
+
+
 def test_event_by_slug_uses_versioned_slug_route_and_clob_market_info_normalizes():
     event_transport = FixtureTransport(
         {f"{GAMMA_BASE}/events/slug/example-general-event": fixture("gamma_event_by_slug.json")}
