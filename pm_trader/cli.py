@@ -35,7 +35,19 @@ def _parser() -> argparse.ArgumentParser:
         default=os.environ.get("PM_TRADER_DATA_DIR", ".pm-trader"),
         help="SQLite data directory",
     )
-    sub = parser.add_subparsers(dest="command", required=True)
+    parser.add_argument(
+        "--dashboard",
+        action="store_true",
+        help="serve the optional read-only paper-trading dashboard instead of a subcommand",
+    )
+    parser.add_argument(
+        "--dashboard-port",
+        type=int,
+        default=8766,
+        help="loopback TCP port for --dashboard (0 chooses a free port)",
+    )
+    # A missing command is rejected in run()/main() only when --dashboard is absent.
+    sub = parser.add_subparsers(dest="command", required=False)
 
     discover = sub.add_parser(
         "discover", help="discover markets through keyset pagination or public search"
@@ -199,6 +211,35 @@ def _gui_descriptor(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
             "launcher": "pm_trader.gui.serve_gui",
         },
     )
+
+
+def _dashboard_descriptor(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
+    return 0, envelope(
+        result={
+            "mode": "local_read_only_dashboard",
+            "host": "127.0.0.1",
+            "port": args.dashboard_port,
+        },
+        assumptions={
+            "paper_only": True,
+            "read_only": True,
+            "provider_calls": False,
+            "launcher": "dashboard.app.serve_dashboard",
+        },
+    )
+
+
+def _parse_launch(argv: list[str] | None) -> argparse.Namespace:
+    """Parse argv; a subcommand is required unless the optional --dashboard is set."""
+
+    parser = _parser()
+    args = parser.parse_args(argv)
+    if args.dashboard:
+        if args.command is not None:
+            parser.error("--dashboard does not take a subcommand")
+    elif args.command is None:
+        parser.error("the following arguments are required: command")
+    return args
 
 
 def _safety_envelope() -> dict[str, Any]:
@@ -375,14 +416,21 @@ def _run_parsed(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
 def run(argv: list[str] | None = None) -> tuple[int, dict[str, Any]]:
     """Run a JSON-returning command; GUI returns its launch descriptor for tests/callers."""
 
-    args = _parser().parse_args(argv)
+    args = _parse_launch(argv)
+    if args.dashboard:
+        return _dashboard_descriptor(args)
     if args.command == "gui":
         return _gui_descriptor(args)
     return _run_parsed(args)
 
 
 def main(argv: list[str] | None = None) -> None:
-    args = _parser().parse_args(argv)
+    args = _parse_launch(argv)
+    if args.dashboard:
+        from dashboard.app import serve_dashboard
+
+        serve_dashboard(args.data_dir, port=args.dashboard_port)
+        return
     if args.command == "gui":
         from .gui import serve_gui
 

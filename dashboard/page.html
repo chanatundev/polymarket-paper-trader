@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pm-trader · paper dashboard</title>
+<style>
+  :root {
+    --bg: #f6f6f4; --fg: #1d1d1b; --muted: #6b6b66; --line: #d9d9d3;
+    --banner-bg: #fff4d6; --banner-fg: #6b4a00; --panel: #ffffff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #161614; --fg: #ecece8; --muted: #9a9a93; --line: #34342f;
+      --banner-bg: #3a2e10; --banner-fg: #ffd98a; --panel: #1f1f1c;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #161614; --fg: #ecece8; --muted: #9a9a93; --line: #34342f;
+    --banner-bg: #3a2e10; --banner-fg: #ffd98a; --panel: #1f1f1c;
+  }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 960px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 20px; margin: 8px 0 12px; }
+  .banner { background: var(--banner-bg); color: var(--banner-fg); border-radius: 8px;
+    padding: 10px 14px; font-size: 14px; }
+  .banner strong { letter-spacing: .04em; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+    padding: 14px; margin-top: 14px; }
+  .meta { color: var(--muted); font-size: 13px; }
+  .empty { color: var(--muted); padding: 24px 8px; text-align: center; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line);
+    vertical-align: top; overflow-wrap: anywhere; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  @media (max-width: 600px) {
+    main { padding: 12px; }
+    table, thead, tbody, tr, th, td { display: block; }
+    thead { display: none; }
+    tr { border-bottom: 1px solid var(--line); padding: 8px 0; }
+    td { border: 0; padding: 2px 0; }
+    td::before { content: attr(data-label) ": "; color: var(--muted); }
+    td.num { text-align: left; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>Paper trading dashboard</h1>
+  <div class="banner" role="note">
+    <strong>PAPER ONLY · READ ONLY.</strong>
+    Fills and P&amp;L shown here are model output from the local paper simulator,
+    not live performance. This page cannot place, change, or cancel orders.
+  </div>
+  <section class="panel" aria-labelledby="recent">
+    <h2 id="recent" class="meta">Recent paper fills (newest first, up to 20)</h2>
+    <!--CONTENT-->
+  </section>
+  <p class="meta">Cash: <!--CASH--></p>
+  <p class="meta">Read from the local store on each page load. Nothing is written.</p>
+</main>
+</body>
+</html>

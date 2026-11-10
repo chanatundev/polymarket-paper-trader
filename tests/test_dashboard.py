@@ -1,0 +1,165 @@
+from __future__ import annotations
+
+import http.client
+import subprocess
+import sys
+import threading
+from pathlib import Path
+
+import pytest
+
+from pm_trader.cli import run
+from pm_trader.storage import SQLiteStore
+from test_history_gui import _seed_canonical, _seed_legacy
+
+ROOT = Path(__file__).parents[1]
+
+
+def test_parser_without_dashboard_still_requires_a_command(tmp_path: Path):
+    with pytest.raises(SystemExit) as no_args:
+        run([])
+    assert no_args.value.code == 2
+
+    with pytest.raises(SystemExit) as data_dir_only:
+        run(["--data-dir", str(tmp_path / "x")])
+    assert data_dir_only.value.code == 2
+
+
+def test_dashboard_flag_rejects_a_subcommand(tmp_path: Path):
+    with pytest.raises(SystemExit) as exc:
+        run(["--data-dir", str(tmp_path / "x"), "--dashboard", "safety"])
+    assert exc.value.code == 2
+
+
+def test_dashboard_descriptor_does_not_open_or_create_a_store(tmp_path: Path):
+    data_dir = tmp_path / "not-created"
+    code, payload = run(
+        ["--data-dir", str(data_dir), "--dashboard", "--dashboard-port", "0"]
+    )
+    assert code == 0
+    assert payload["result"]["mode"] == "local_read_only_dashboard"
+    assert payload["result"]["host"] == "127.0.0.1"
+    assert payload["result"]["port"] == 0
+    assert payload["assumptions"]["provider_calls"] is False
+    assert payload["assumptions"]["read_only"] is True
+    assert not data_dir.exists()
+
+
+def test_dashboard_default_port_is_separate_from_gui(tmp_path: Path):
+    code, payload = run(["--data-dir", str(tmp_path / "x"), "--dashboard"])
+    assert code == 0
+    assert payload["result"]["port"] == 8766
+
+
+def test_dashboard_package_is_not_imported_without_the_flag():
+    script = (
+        "import sys\n"
+        "from pm_trader.cli import run\n"
+        "run(['safety'])\n"
+        "loaded = [m for m in sys.modules if m == 'dashboard' or m.startswith('dashboard.')]\n"
+        "assert not loaded, loaded\n"
+    )
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert completed.returncode == 0, completed.stderr
+
+
+def test_missing_store_snapshot_is_an_empty_state_and_creates_nothing(tmp_path: Path):
+    from dashboard.app import build_snapshot, render_dashboard_html
+
+    data_dir = tmp_path / "missing-data"
+    snapshot = build_snapshot(data_dir)
+    assert snapshot["state"] == "missing"
+    assert snapshot["rows"] == []
+    html = render_dashboard_html(snapshot)
+    assert "No paper trades yet" in html
+    assert "paper only" in html.lower()
+    assert "read only" in html.lower()
+    assert not data_dir.exists()
+
+
+def test_empty_store_snapshot_is_an_empty_state(tmp_path: Path):
+    from dashboard.app import build_snapshot, render_dashboard_html
+
+    data_dir = tmp_path / "empty-data"
+    SQLiteStore(data_dir).close()
+    snapshot = build_snapshot(data_dir)
+    assert snapshot["state"] == "empty"
+    assert "No paper trades yet" in render_dashboard_html(snapshot)
+
+
+def test_trades_render_newest_first_with_cash_and_row_limit(tmp_path: Path, market, book):
+    from dashboard.app import build_snapshot, render_dashboard_html
+
+    data_dir = tmp_path / "paper-data"
+    _seed_canonical(data_dir, market, book)
+    _seed_legacy(data_dir, created_at="2026-08-26T20:00:11Z")
+    snapshot = build_snapshot(data_dir)
+
+    assert snapshot["state"] == "ready"
+    assert snapshot["total"] == 3
+    assert len(snapshot["rows"]) == 3
+    assert snapshot["rows"][0]["time"] >= snapshot["rows"][1]["time"]
+    assert "cash" in snapshot
+
+    html = render_dashboard_html(snapshot)
+    assert "No paper trades yet" not in html
+    assert market.question in html
+    assert "buy" in html and "sell" in html
+
+
+def test_row_list_is_capped_at_twenty(tmp_path: Path):
+    from dashboard.app import build_snapshot
+
+    data_dir = tmp_path / "many"
+    data_dir.mkdir()
+    for index in range(25):
+        _seed_legacy(data_dir, created_at=f"2026-08-26T20:{index:02d}:00Z")
+    snapshot = build_snapshot(data_dir)
+    assert snapshot["total"] == 25
+    assert len(snapshot["rows"]) == 20
+
+
+def test_stored_script_text_is_escaped_in_html(tmp_path: Path):
+    from dashboard.app import build_snapshot, render_dashboard_html
+
+    data_dir = tmp_path / "legacy-data"
+    _seed_legacy(data_dir)
+    html = render_dashboard_html(build_snapshot(data_dir))
+
+    assert "<script>alert(1)</script>" not in html
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in html
+    assert "<script" not in html.lower()
+
+
+def test_server_binds_loopback_and_is_read_only(tmp_path: Path):
+    from dashboard.app import create_dashboard_server
+
+    server = create_dashboard_server(tmp_path / "missing", port=0)
+    try:
+        assert server.server_address[0] == "127.0.0.1"
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        port = server.server_address[1]
+
+        connection = http.client.HTTPConnection("127.0.0.1", port, timeout=3)
+        connection.request("GET", "/", headers={"Host": f"127.0.0.1:{port}"})
+        response = connection.getresponse()
+        body = response.read().decode("utf-8")
+        assert response.status == 200
+        assert "No paper trades yet" in body
+        connection.close()
+
+        connection = http.client.HTTPConnection("127.0.0.1", port, timeout=3)
+        connection.request("POST", "/", body=b"x", headers={"Host": f"127.0.0.1:{port}"})
+        assert connection.getresponse().status == 501
+        connection.close()
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert not (tmp_path / "missing").exists()
