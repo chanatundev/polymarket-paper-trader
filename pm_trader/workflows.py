@@ -6,9 +6,11 @@ import json
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
-from .api import CLOBAdapter, GammaAdapter, ResourceLimits
+from .activity import append_activity, cli_is_logging, record_command, record_simulation
+from .api import CLOBAdapter, FixtureTransport, GammaAdapter, ResourceLimits
 from .models import BookSnapshot, Decision, MarketState, PaperOrder, SimulationConfig
 from .normalizers import make_provenance, normalize_book, normalize_market
 from .recording import ReplayEngine
@@ -83,13 +85,15 @@ class ResearchService:
     def __post_init__(self) -> None:
         self.gamma = self.gamma or GammaAdapter(limits=self.limits)
         self.clob = self.clob or CLOBAdapter(limits=self.limits)
+        if self.store.db_path.name != ":memory:":
+            self.clob.activity_dir = self.store.db_path.parent
 
     def discover(
         self, *, query: str | None = None, limit: int = 20, cursor: str | None = None
     ) -> dict[str, Any]:
         if query:
             found = self.gamma.search(query, limit=limit)
-            return envelope(
+            payload = envelope(
                 result={
                     "query": query,
                     "markets": [scan_market(market) for market in found.markets],
@@ -102,17 +106,35 @@ class ResearchService:
                 provenance_ids=(found.observation.provenance.observation_id,),
                 assumptions={"provider": "gamma", "route": "/public-search"},
             )
-        page = self.gamma.list_markets(limit=limit, after_cursor=cursor)
-        return envelope(
-            result={
-                "markets": [scan_market(market) for market in page.items],
-                "next_cursor": page.next_cursor,
-                "query": page.query,
-                "response_metadata": page.response_metadata,
-            },
-            provenance_ids=(page.observation.provenance.observation_id,),
-            assumptions={"provider": "gamma", "route": "/markets/keyset", "pagination": "keyset"},
+        else:
+            page = self.gamma.list_markets(limit=limit, after_cursor=cursor)
+            payload = envelope(
+                result={
+                    "markets": [scan_market(market) for market in page.items],
+                    "next_cursor": page.next_cursor,
+                    "query": page.query,
+                    "response_metadata": page.response_metadata,
+                },
+                provenance_ids=(page.observation.provenance.observation_id,),
+                assumptions={
+                    "provider": "gamma",
+                    "route": "/markets/keyset",
+                    "pagination": "keyset",
+                },
+            )
+        _record_service_command(
+            self,
+            SimpleNamespace(
+                command="discover",
+                query=query,
+                limit=limit,
+                cursor=cursor,
+                fixture=isinstance(self.gamma.transport, FixtureTransport) or None,
+            ),
+            0,
+            payload,
         )
+        return payload
 
     def inspect_market(self, identifier: str) -> dict[str, Any]:
         market = self._market(identifier)
@@ -146,6 +168,7 @@ class ResearchService:
         simulation = SimulationEngine(self.store).run(
             market=market, book=book, orders=orders, config=config, dataset_id=dataset_id
         )
+        _record(self, "simulate", market, simulation)
         warnings = list(simulation.report.warnings)
         for match in simulation.matches:
             warnings.extend(match.decision.warnings)
@@ -174,6 +197,22 @@ class ResearchService:
         simulation = ReplayEngine(self.store, limits=self.limits).replay_jsonl(
             dataset_path, market=market, orders=orders, config=config
         )
+        _record(self, "replay", market, simulation)
+        if not cli_is_logging() and self.store.db_path.name != ":memory:":
+            try:
+                append_activity(
+                    self.store.db_path.parent,
+                    {
+                        "kind": "replay",
+                        "command": "replay",
+                        "dataset": Path(str(dataset_path)).name,
+                        "source": "library",
+                        "ok": True,
+                        "error": None,
+                    },
+                )
+            except OSError:
+                pass
         return envelope(
             result=simulation,
             warnings=simulation.report.warnings,
@@ -200,10 +239,18 @@ class ResearchService:
     def portfolio_report(self, run_id: str) -> dict[str, Any]:
         report = self.store.get_report(run_id)
         if report is None:
-            return envelope(
+            payload = envelope(
                 result=None, errors=({"code": "REPORT_NOT_FOUND", "message": run_id},), ok=False
             )
-        return envelope(result=report, assumptions={"paper_pnl_is_not_live_pnl": True})
+        else:
+            payload = envelope(result=report, assumptions={"paper_pnl_is_not_live_pnl": True})
+        _record_service_command(
+            self,
+            SimpleNamespace(command="report", run_id=run_id),
+            0 if payload["ok"] else 1,
+            payload,
+        )
+        return payload
 
     def _market(self, identifier: str) -> MarketState:
         if identifier.startswith("0x"):
@@ -213,7 +260,41 @@ class ResearchService:
         )
         if not page.items:
             raise ValueError(f"market not found: {identifier}")
-        return page.items[0]
+        market = page.items[0]
+        _record_service_command(
+            self,
+            SimpleNamespace(
+                command="market",
+                market_command="get",
+                identifier=identifier,
+                fixture=isinstance(self.gamma.transport, FixtureTransport) or None,
+            ),
+            0,
+            envelope(result=market),
+        )
+        return market
+
+
+def _record(service: ResearchService, command: str, market: MarketState, simulation: Any) -> None:
+    path = service.store.db_path
+    if path.name == ":memory:":
+        return
+    try:
+        record_simulation(path.parent, command=command, market=market, simulation=simulation)
+    except OSError:
+        pass
+
+
+def _record_service_command(
+    service: ResearchService, args: Any, code: int, payload: dict[str, Any]
+) -> None:
+    path = service.store.db_path
+    if path.name == ":memory:" or cli_is_logging():
+        return
+    try:
+        record_command(path.parent, args, code, payload)
+    except OSError:
+        pass
 
 
 def load_market_fixture(path: str | Path) -> MarketState:

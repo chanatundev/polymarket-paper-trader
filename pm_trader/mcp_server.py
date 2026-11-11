@@ -14,6 +14,7 @@ from .errors import TraderError
 from .models import PaperOrder, SimulationConfig
 from .serialization import bounded_json, canonical_json
 from .storage import SQLiteStore
+from .activity import record_tool
 from .workflows import ResearchService, envelope, load_book_fixture, load_market_fixture
 
 TOOL_DEFINITIONS = [
@@ -107,26 +108,27 @@ def dispatch_tool(
     args = dict(arguments or {})
     owned = service is None
     workflow = service or _service(args.get("data_dir", ".pm-trader"))
+    payload: dict[str, Any] | None = None
     try:
         if name == "discover_markets":
-            return workflow.discover(
+            payload = workflow.discover(
                 query=args.get("query"), limit=int(args.get("limit", 20)), cursor=args.get("cursor")
             )
-        if name == "inspect_market":
+        elif name == "inspect_market":
             market = load_market_fixture(str(args["fixture"]))
-            return envelope(
+            payload = envelope(
                 result=market,
                 freshness=market.freshness.value,
                 provenance_ids=(market.provenance.observation_id,) if market.provenance else (),
             )
-        if name == "inspect_book":
+        elif name == "inspect_book":
             book = load_book_fixture(str(args["fixture"]))
-            return envelope(
+            payload = envelope(
                 result=book,
                 freshness=book.freshness.value,
                 provenance_ids=(book.provenance.observation_id,) if book.provenance else (),
             )
-        if name == "simulate":
+        elif name == "simulate":
             market = load_market_fixture(str(args["market_fixture"]))
             book = load_book_fixture(str(args["book_fixture"]))
             token = market.token_for(str(args.get("outcome", "Yes")))
@@ -141,13 +143,13 @@ def dispatch_tool(
                 post_only=bool(args.get("post_only", False)),
                 model_version="matcher-v1",
             )
-            return workflow.simulate(
+            payload = workflow.simulate(
                 market=market,
                 book=book,
                 orders=(order,),
                 config=SimulationConfig(starting_cash=args.get("starting_cash", "10000")),
             )
-        if name == "replay":
+        elif name == "replay":
             market = load_market_fixture(str(args["market_fixture"]))
             token = market.token_for(str(args.get("outcome", "Yes")))
             order = PaperOrder(
@@ -159,16 +161,16 @@ def dispatch_tool(
                 quantity=args.get("size", "10"),
                 time_in_force=str(args.get("time_in_force", "fok")),
             )
-            return workflow.replay(
+            payload = workflow.replay(
                 dataset_path=str(args["dataset"]),
                 market=market,
                 orders=(order,),
                 config=SimulationConfig(starting_cash=args.get("starting_cash", "10000")),
             )
-        if name == "portfolio_report":
-            return workflow.portfolio_report(str(args["run_id"]))
-        if name == "explain_decision":
-            return envelope(
+        elif name == "portfolio_report":
+            payload = workflow.portfolio_report(str(args["run_id"]))
+        elif name == "explain_decision":
+            payload = envelope(
                 result={
                     "status": args.get("status"),
                     "reason_code": args.get("reason_code"),
@@ -179,12 +181,24 @@ def dispatch_tool(
                 provenance_ids=args.get("provenance_ids", []),
                 assumptions=args.get("assumptions", {}),
             )
-        return envelope(result=None, errors=({"code": "UNKNOWN_TOOL", "message": name},), ok=False)
+        else:
+            payload = envelope(
+                result=None, errors=({"code": "UNKNOWN_TOOL", "message": name},), ok=False
+            )
     except TraderError as exc:
-        return envelope(result=None, errors=(exc.to_dict(),), ok=False)
+        payload = envelope(result=None, errors=(exc.to_dict(),), ok=False)
     except (OSError, ValueError, TypeError, KeyError, IndexError, sqlite3.Error) as exc:
-        return envelope(
+        payload = envelope(
             result=None, errors=({"code": "UNEXPECTED_ERROR", "message": str(exc)},), ok=False
+        )
+    try:
+        if payload is not None and workflow.store.db_path.name != ":memory:":
+            try:
+                record_tool(workflow.store.db_path.parent, name, args, payload)
+            except OSError:
+                pass
+        return payload or envelope(
+            result=None, errors=({"code": "UNEXPECTED_ERROR", "message": name},), ok=False
         )
     finally:
         if owned:

@@ -11,6 +11,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+from .activity import begin_cli_log, end_cli_log, record_command
 from .api import ResourceLimits
 from .errors import TraderError
 from .models import PaperOrder, SimulationConfig
@@ -316,101 +317,184 @@ def _run_parsed(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
     if args.command == "safety":
         return 0, _safety_envelope()
     store = SQLiteStore(args.data_dir)
+    token = begin_cli_log()
     try:
         if args.command == "discover":
             if args.fixture:
-                return 0, _fixture_page(
-                    args.fixture, search=bool(args.query), query=args.query or "", limit=args.limit
+                return _logged(
+                    args,
+                    0,
+                    _fixture_page(
+                        args.fixture,
+                        search=bool(args.query),
+                        query=args.query or "",
+                        limit=args.limit,
+                    ),
                 )
-            return 0, ResearchService(store, limits=ResourceLimits()).discover(
-                query=args.query, limit=args.limit, cursor=args.cursor
+            return _logged(
+                args,
+                0,
+                ResearchService(store, limits=ResourceLimits()).discover(
+                    query=args.query, limit=args.limit, cursor=args.cursor
+                ),
             )
         if args.command in {"market", "markets"}:
             if args.market_command == "list":
                 if args.fixture:
-                    return 0, _fixture_page(args.fixture, limit=args.limit)
-                return 0, ResearchService(store).discover(limit=args.limit)
+                    return _logged(args, 0, _fixture_page(args.fixture, limit=args.limit))
+                return _logged(args, 0, ResearchService(store).discover(limit=args.limit))
             if args.market_command == "search":
                 if args.fixture:
-                    return 0, _fixture_page(
-                        args.fixture, search=True, query=args.query, limit=args.limit
+                    return _logged(
+                        args,
+                        0,
+                        _fixture_page(
+                            args.fixture, search=True, query=args.query, limit=args.limit
+                        ),
                     )
-                return 0, ResearchService(store).discover(query=args.query, limit=args.limit)
+                return _logged(
+                    args, 0, ResearchService(store).discover(query=args.query, limit=args.limit)
+                )
             market = (
                 load_market_fixture(args.fixture)
                 if args.fixture
                 else ResearchService(store)._market(args.identifier)
             )
-            return 0, envelope(
-                result=market,
-                freshness=market.freshness.value,
-                provenance_ids=(market.provenance.observation_id,) if market.provenance else (),
+            return _logged(
+                args,
+                0,
+                envelope(
+                    result=market,
+                    freshness=market.freshness.value,
+                    provenance_ids=(market.provenance.observation_id,) if market.provenance else (),
+                ),
             )
         if args.command == "inspect":
             if args.inspect_command == "market":
                 market = load_market_fixture(args.fixture)
-                return 0, envelope(
-                    result=market,
-                    freshness=market.freshness.value,
-                    provenance_ids=(market.provenance.observation_id,) if market.provenance else (),
+                return _logged(
+                    args,
+                    0,
+                    envelope(
+                        result=market,
+                        freshness=market.freshness.value,
+                        provenance_ids=(market.provenance.observation_id,)
+                        if market.provenance
+                        else (),
+                    ),
                 )
             book = load_book_fixture(args.fixture)
-            return 0, envelope(
-                result=book,
-                freshness=book.freshness.value,
-                provenance_ids=(book.provenance.observation_id,) if book.provenance else (),
+            return _logged(
+                args,
+                0,
+                envelope(
+                    result=book,
+                    freshness=book.freshness.value,
+                    provenance_ids=(book.provenance.observation_id,) if book.provenance else (),
+                ),
             )
         if args.command == "simulate":
             market = load_market_fixture(args.market_fixture)
+            args._activity_market = market.question or market.slug
             book = load_book_fixture(args.book_fixture)
             order = _order(args, market)
             config = SimulationConfig(starting_cash=args.starting_cash, latency_ms=args.latency_ms)
-            return 0, ResearchService(store).simulate(
-                market=market, book=book, orders=(order,), config=config, dataset_id=args.dataset_id
+            return _logged(
+                args,
+                0,
+                ResearchService(store).simulate(
+                    market=market,
+                    book=book,
+                    orders=(order,),
+                    config=config,
+                    dataset_id=args.dataset_id,
+                ),
             )
         if args.command == "replay":
             market = load_market_fixture(args.market_fixture)
+            args._activity_market = market.question or market.slug
             order = _order(args, market)
             config = SimulationConfig(starting_cash=args.starting_cash)
-            return 0, ResearchService(store).replay(
-                dataset_path=args.dataset, market=market, orders=(order,), config=config
+            return _logged(
+                args,
+                0,
+                ResearchService(store).replay(
+                    dataset_path=args.dataset, market=market, orders=(order,), config=config
+                ),
             )
         if args.command == "report":
             report = store.get_report(args.run_id)
             if report is None:
-                return 1, envelope(
-                    result=None,
-                    errors=({"code": "REPORT_NOT_FOUND", "message": args.run_id},),
-                    ok=False,
+                return _logged(
+                    args,
+                    1,
+                    envelope(
+                        result=None,
+                        errors=({"code": "REPORT_NOT_FOUND", "message": args.run_id},),
+                        ok=False,
+                    ),
                 )
-            return 0, envelope(
-                result=report, freshness="unknown", assumptions={"paper_pnl_is_not_live_pnl": True}
+            return _logged(
+                args,
+                0,
+                envelope(
+                    result=report,
+                    freshness="unknown",
+                    assumptions={"paper_pnl_is_not_live_pnl": True},
+                ),
             )
         if args.command == "explain":
-            return 0, envelope(
-                result={
-                    "status": args.status,
-                    "reason_code": args.reason_code,
-                    "reasons": args.reason,
-                    "freshness": args.freshness,
-                },
-                freshness=args.freshness,
+            return _logged(
+                args,
+                0,
+                envelope(
+                    result={
+                        "status": args.status,
+                        "reason_code": args.reason_code,
+                        "reasons": args.reason,
+                        "freshness": args.freshness,
+                    },
+                    freshness=args.freshness,
+                ),
             )
-        return 1, envelope(
-            result=None, errors=({"code": "UNKNOWN_COMMAND", "message": args.command},), ok=False
+        return _logged(
+            args,
+            1,
+            envelope(
+                result=None,
+                errors=({"code": "UNKNOWN_COMMAND", "message": args.command},),
+                ok=False,
+            ),
         )
     except TraderError as exc:
-        return 2, envelope(result=None, errors=(exc.to_dict(),), ok=False)
+        return _logged(args, 2, envelope(result=None, errors=(exc.to_dict(),), ok=False))
     except (OSError, ValueError, TypeError, KeyError, IndexError, sqlite3.Error) as exc:
-        return 2, envelope(
-            result=None,
-            errors=(
-                {"code": "UNEXPECTED_ERROR", "category": "local_validation", "message": str(exc)},
+        return _logged(
+            args,
+            2,
+            envelope(
+                result=None,
+                errors=(
+                    {
+                        "code": "UNEXPECTED_ERROR",
+                        "category": "local_validation",
+                        "message": str(exc),
+                    },
+                ),
+                ok=False,
             ),
-            ok=False,
         )
     finally:
+        end_cli_log(token)
         store.close()
+
+
+def _logged(args: argparse.Namespace, code: int, payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+    try:
+        record_command(args.data_dir, args, code, payload)
+    except OSError:
+        pass
+    return code, payload
 
 
 def run(argv: list[str] | None = None) -> tuple[int, dict[str, Any]]:
