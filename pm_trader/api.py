@@ -131,6 +131,10 @@ class FixtureTransport:
         return TransportResponse(status_code=200, data=response, url=url)
 
 
+def _activity_source(transport: JsonTransport) -> str:
+    return "fixture" if isinstance(transport, FixtureTransport) else "public"
+
+
 @dataclass(frozen=True)
 class Observation(Generic[T]):
     """Raw sanitized payload plus its canonical interpretation."""
@@ -497,6 +501,7 @@ class CLOBAdapter(_Adapter):
         super().__init__(
             transport=transport, base_url=base_url, limits=limits, timeout=timeout, clock=clock
         )
+        self.activity_dir = None
 
     def get_book(self, token_id: str) -> Observation[BookSnapshot]:
         if not token_id.strip():
@@ -508,6 +513,18 @@ class CLOBAdapter(_Adapter):
             endpoint="/book",
             provider=self.provider,
         )
+        if self.activity_dir is not None:
+            from .activity import cli_is_logging, record_book
+
+            if not cli_is_logging():
+                try:
+                    record_book(
+                        self.activity_dir,
+                        token_id=token_id,
+                        source=_activity_source(self.transport),
+                    )
+                except OSError:
+                    pass
         return Observation(
             value=value, raw_payload=observation.raw_payload, provenance=observation.provenance
         )
@@ -554,6 +571,19 @@ class CLOBAdapter(_Adapter):
             endpoint="/markets/{condition_id}",
             provider=self.provider,
         )
+        if self.activity_dir is not None:
+            from .activity import cli_is_logging, record_market
+
+            if not cli_is_logging():
+                try:
+                    record_market(
+                        self.activity_dir,
+                        identifier=condition_id,
+                        slug=value.slug,
+                        source=_activity_source(self.transport),
+                    )
+                except OSError:
+                    pass
         return Observation(
             value=value, raw_payload=observation.raw_payload, provenance=observation.provenance
         )
@@ -585,6 +615,19 @@ class CLOBAdapter(_Adapter):
         schedule = normalize_fee_schedule(
             raw, source=self.provider, endpoint="/fee-rate", unknown=unknown
         )
+        if self.activity_dir is not None:
+            from .activity import cli_is_logging, record_fee
+
+            if not cli_is_logging():
+                try:
+                    record_fee(
+                        self.activity_dir,
+                        token_id=token_id,
+                        bps=base_fee_bps,
+                        source=_activity_source(self.transport),
+                    )
+                except OSError:
+                    pass
         return FeeRateResult(base_fee_bps=base_fee_bps, schedule=schedule, observation=observation)
 
     def get_price_history(
@@ -617,6 +660,19 @@ class CLOBAdapter(_Adapter):
             endpoint="/prices-history",
             provider=self.provider,
         )
+        if self.activity_dir is not None:
+            from .activity import cli_is_logging, record_prices
+
+            if not cli_is_logging():
+                try:
+                    record_prices(
+                        self.activity_dir,
+                        token_id=token_id,
+                        count=len(points),
+                        source=_activity_source(self.transport),
+                    )
+                except OSError:
+                    pass
         return Observation(
             value=points, raw_payload=observation.raw_payload, provenance=observation.provenance
         )

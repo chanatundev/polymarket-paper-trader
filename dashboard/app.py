@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+from pm_trader.activity import read_activity
 from pm_trader.history import (
     HistoryQuery,
     HistoryRecordMalformed,
@@ -37,8 +38,13 @@ SECURITY_HEADERS = {
 
 
 def build_snapshot(data_dir: str | Path) -> dict[str, Any]:
-    """Read at most ``ROW_LIMIT`` newest trades; never creates the store."""
+    """Read the activity log, then the store. Never creates either."""
 
+    events = read_activity(data_dir, limit=ROW_LIMIT)
+    if events:
+        rows = [_event_row(event) for event in events]
+        cash = next((event.get("cash") for event in events if event.get("cash")), None)
+        return _snapshot("ready", rows=rows, total=len(rows), cash=cash)
     if not resolve_database_path(data_dir).is_file():
         return _snapshot("missing")
     reader = TradeHistoryReader.open(data_dir)
@@ -132,12 +138,64 @@ def _row(record: dict[str, Any]) -> dict[str, Any]:
     market = record.get("market") or {}
     execution = record.get("execution") or {}
     return {
+        "kind": "trade",
         "label": market.get("question") or market.get("slug") or "(unnamed market)",
         "side": execution.get("side"),
         "price": execution.get("price"),
         "size": execution.get("filled_quantity"),
         "time": record.get("occurred_at"),
     }
+
+
+def _event_row(event: dict[str, Any]) -> dict[str, Any]:
+    kind = str(event.get("kind") or "command")
+    return {
+        "kind": kind,
+        "label": _event_label(event),
+        "side": event.get("side"),
+        "price": event.get("price"),
+        "size": event.get("size"),
+        "time": event.get("ts"),
+    }
+
+
+def _event_label(event: dict[str, Any]) -> str:
+    kind = event.get("kind")
+    if kind == "search":
+        label = f'search "{event.get("query") or ""}" · {event.get("count")} markets'
+    elif kind == "keyset":
+        label = f'page limit {event.get("limit")} · {event.get("count")} markets'
+    elif kind == "lookup" and event.get("target") == "market":
+        label = f'market {event.get("slug") or event.get("identifier") or ""}'
+    elif kind == "lookup" and event.get("target") == "book":
+        parts = ["book", event.get("outcome") or "", event.get("token_id") or ""]
+        label = " ".join(part for part in parts if part)
+    elif kind == "lookup" and event.get("target") == "fee":
+        label = f'fee {event.get("token_id") or ""} · {event.get("bps")} bps'
+    elif kind == "lookup" and event.get("target") == "prices":
+        label = f'prices {event.get("token_id") or ""} · {event.get("count")} points'
+    elif kind == "lookup" and event.get("target") == "report":
+        label = f'report {event.get("run_id") or ""}'
+    elif kind == "order":
+        label = f'order {event.get("market") or ""} {event.get("tif") or ""}'.strip()
+    elif kind == "decision":
+        label = f'{event.get("status") or "decision"} {event.get("reason") or ""}'.strip()
+    elif kind == "fill":
+        fee = event.get("fee")
+        label = f'fill {event.get("market") or ""}' + (f" fee {fee}" if fee else "")
+    elif kind == "cash":
+        label = f'cash {event.get("cash") or ""} (model)'
+    elif kind == "replay":
+        label = f'replay {event.get("dataset") or ""}'
+    else:
+        command = str(event.get("command") or "command")
+        market = event.get("market")
+        label = f"{command} {market}".strip() if market else command
+        if event.get("ok") is False:
+            label = f'{label} failed {event.get("error") or ""}'.strip()
+    if event.get("ok") is False and event.get("error") and "failed" not in label:
+        label = f'{label} failed {event.get("error")}'.strip()
+    return label
 
 
 def _newest_cash(reader: TradeHistoryReader, history_id: Any) -> str | None:
@@ -167,7 +225,7 @@ def _content_html(snapshot: dict[str, Any]) -> str:
         return '<p class="empty">The paper-trading store could not be read.</p>'
     rows = "".join(
         "<tr>"
-        f'<td data-label="Market">{_text(row["label"])}</td>'
+        f'<td data-label="Activity">{_text(row["label"])}</td>'
         f'<td data-label="Side">{_text(row["side"])}</td>'
         f'<td class="num" data-label="Price">{_text(row["price"])}</td>'
         f'<td class="num" data-label="Size">{_text(row["size"])}</td>'
@@ -177,8 +235,8 @@ def _content_html(snapshot: dict[str, Any]) -> str:
     )
     return (
         "<table><thead><tr>"
-        "<th>Market</th><th>Side</th><th class=\"num\">Price</th>"
+        "<th>Activity</th><th>Side</th><th class=\"num\">Price</th>"
         "<th class=\"num\">Size</th><th>Time</th>"
         f"</tr></thead><tbody>{rows}</tbody></table>"
-        f'<p class="meta">Showing {len(snapshot["rows"])} of {snapshot["total"]} trades.</p>'
+        f'<p class="meta">Showing {len(snapshot["rows"])} of {snapshot["total"]} events.</p>'
     )
