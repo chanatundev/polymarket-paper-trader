@@ -28,9 +28,19 @@ HOST = "127.0.0.1"
 DEFAULT_PORT = 8766
 ROW_LIMIT = 20
 PAGE_TEMPLATE = Path(__file__).with_name("page.html")
+BRAND_ASSETS = {
+    "/brand/inter.ttf": (Path(__file__).with_name("brand") / "inter.ttf", "font/ttf"),
+    "/brand/polymarket.svg": (
+        Path(__file__).with_name("brand") / "polymarket.svg",
+        "image/svg+xml",
+    ),
+}
 SECURITY_HEADERS = {
     "Cache-Control": "no-store",
-    "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'",
+    "Content-Security-Policy": (
+        "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; "
+        "font-src 'self'; base-uri 'none'; form-action 'none'"
+    ),
     "Referrer-Policy": "no-referrer",
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
@@ -112,17 +122,37 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         if self.headers.get("Host") not in {f"{HOST}:{port}", f"localhost:{port}"}:
             self._send(400, "text/plain; charset=utf-8", b"bad host header\n")
             return
-        if urlsplit(self.path).path not in {"/", "/index.html"}:
+        request_path = urlsplit(self.path).path
+        asset = BRAND_ASSETS.get(request_path)
+        if asset is not None:
+            asset_path, content_type = asset
+            self._send(
+                200,
+                content_type,
+                asset_path.read_bytes(),
+                cache_control="public, max-age=3600",
+            )
+            return
+        if request_path not in {"/", "/index.html"}:
             self._send(404, "text/plain; charset=utf-8", b"not found\n")
             return
         body = render_dashboard_html(build_snapshot(self.server.data_dir))
         self._send(200, "text/html; charset=utf-8", body.encode("utf-8"))
 
-    def _send(self, status: int, content_type: str, body: bytes) -> None:
+    def _send(
+        self,
+        status: int,
+        content_type: str,
+        body: bytes,
+        *,
+        cache_control: str = "no-store",
+    ) -> None:
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
-        for name, value in SECURITY_HEADERS.items():
+        headers = dict(SECURITY_HEADERS)
+        headers["Cache-Control"] = cache_control
+        for name, value in headers.items():
             self.send_header(name, value)
         self.end_headers()
         self.wfile.write(body)

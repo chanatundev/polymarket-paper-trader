@@ -4,26 +4,41 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="refresh" content="2">
-<title>pm-trader · paper dashboard</title>
+<title>Polymarket · paper dashboard</title>
 <style>
+  @font-face {
+    font-family: "Inter";
+    src: url("/brand/inter.ttf") format("truetype");
+    font-style: normal;
+    font-weight: 100 900;
+    font-display: swap;
+  }
   :root {
-    --bg: #f6f6f4; --fg: #1d1d1b; --muted: #6b6b66; --line: #d9d9d3;
-    --banner-bg: #fff4d6; --banner-fg: #6b4a00; --panel: #ffffff;
+    --bg: #ffffff; --fg: #000000; --muted: rgb(0 0 0 / 62%); --line: rgb(0 0 0 / 14%);
+    --banner-bg: #2e5cff; --banner-fg: #ffffff; --panel: #ffffff; --logo-filter: none;
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
-      --bg: #161614; --fg: #ecece8; --muted: #9a9a93; --line: #34342f;
-      --banner-bg: #3a2e10; --banner-fg: #ffd98a; --panel: #1f1f1c;
+      --bg: #000000; --fg: #ffffff; --muted: rgb(255 255 255 / 68%);
+      --line: rgb(255 255 255 / 16%);
+      --banner-bg: #2e5cff; --banner-fg: #ffffff; --panel: #000000;
+      --logo-filter: invert(1);
     }
   }
   :root[data-theme="dark"] {
-    --bg: #161614; --fg: #ecece8; --muted: #9a9a93; --line: #34342f;
-    --banner-bg: #3a2e10; --banner-fg: #ffd98a; --panel: #1f1f1c;
+    --bg: #000000; --fg: #ffffff; --muted: rgb(255 255 255 / 68%);
+    --line: rgb(255 255 255 / 16%);
+    --banner-bg: #2e5cff; --banner-fg: #ffffff; --panel: #000000;
+    --logo-filter: invert(1);
   }
   body { margin: 0; background: var(--bg); color: var(--fg);
-    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+    font: 15px/1.5 "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-optical-sizing: auto; }
   main { max-width: 960px; margin: 0 auto; padding: 16px; }
-  h1 { font-size: 20px; margin: 8px 0 12px; }
+  .masthead { display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    margin: 8px 0 12px; }
+  .brand-logo { display: block; width: 112px; height: auto; filter: var(--logo-filter); }
+  h1 { font-size: 20px; margin: 0; }
   .banner { background: var(--banner-bg); color: var(--banner-fg); border-radius: 8px;
     padding: 10px 14px; font-size: 14px; }
   .banner strong { letter-spacing: .04em; }
@@ -49,7 +64,10 @@
 </head>
 <body>
 <main>
-  <h1>Paper trading dashboard</h1>
+  <header class="masthead">
+    <img class="brand-logo" src="/brand/polymarket.svg" alt="Polymarket">
+    <h1>Paper trading dashboard</h1>
+  </header>
   <div class="banner" role="note">
     <strong>PAPER ONLY · READ ONLY.</strong>
     Fills and P&amp;L shown here are model output from the local paper simulator,
