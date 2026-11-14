@@ -214,7 +214,7 @@ def record_tool(
         query=arguments.get("query"),
         limit=arguments.get("limit"),
         cursor=arguments.get("cursor"),
-        identifier=arguments.get("identifier"),
+        identifier=arguments.get("identifier") or arguments.get("market"),
         outcome=arguments.get("outcome"),
         run_id=arguments.get("run_id"),
         fixture=arguments.get("fixture")

@@ -43,10 +43,19 @@ class LedgerState:
 class AppendOnlyLedger:
     """Ledger whose financial changes are represented only by immutable entries."""
 
-    def __init__(self, store: SQLiteStore, *, run_id: str, starting_cash: Decimal) -> None:
+    def __init__(
+        self,
+        store: SQLiteStore,
+        *,
+        run_id: str,
+        starting_cash: Decimal,
+        opening_positions: Mapping[str, Any] | None = None,
+    ) -> None:
         self.store = store
         self.state = LedgerState(run_id=run_id, starting_cash=starting_cash, cash=ZERO)
         self._sequence = 0
+        self._account_mode = opening_positions is not None
+        self._carried: set[str] = set()
         self._append(
             kind=LedgerKind.INITIAL_CASH.value,
             asset_id=None,
@@ -62,6 +71,29 @@ class AppendOnlyLedger:
             observation_id=None,
             assumptions={"paper_only": True},
         )
+        # Positions carried in from earlier account runs; no cash moves.
+        for asset_id, opening in sorted((opening_positions or {}).items()):
+            quantity = decimal(opening.quantity, field="opening.quantity")
+            cost_basis = decimal(opening.cost_basis, field="opening.cost_basis")
+            if quantity <= ZERO:
+                continue
+            self.state.positions[asset_id] = PositionState(quantity=quantity, cost_basis=cost_basis)
+            self._carried.add(asset_id)
+            self._append(
+                kind=LedgerKind.OPENING_POSITION.value,
+                asset_id=asset_id,
+                order_id=None,
+                fill_id=None,
+                cash_delta=ZERO,
+                position_delta=quantity,
+                notional=ZERO,
+                fee=None,
+                rebate_estimate=None,
+                realized_pnl=None,
+                unrealized_pnl=None,
+                observation_id=None,
+                assumptions={"paper_only": True, "cost_basis": str(cost_basis)},
+            )
 
     def record_order(self, order: PaperOrder) -> None:
         if not any(existing.order_id == order.order_id for existing in self.state.orders):
@@ -152,6 +184,40 @@ class AppendOnlyLedger:
         self.state.fills.append(fill)
         self.store.insert_fill(self.state.run_id, fill)
 
+    def resolve(
+        self, asset_id: str, *, payout_per_share: Decimal, assumptions: Mapping[str, Any]
+    ) -> Decimal:
+        """Close a held position at its resolution payout; returns realized P&L."""
+
+        payout = decimal(payout_per_share, field="payout_per_share")
+        if payout < ZERO or payout > Decimal(1):
+            raise LocalValidationError("resolution payout must be between 0 and 1")
+        position = self.state.positions.get(asset_id)
+        if position is None or position.quantity <= ZERO:
+            raise LocalValidationError("no paper position to resolve", details={"asset_id": asset_id})
+        proceeds = position.quantity * payout
+        realized = proceeds - position.cost_basis
+        self._append(
+            kind=LedgerKind.RESOLUTION.value,
+            asset_id=asset_id,
+            order_id=None,
+            fill_id=None,
+            cash_delta=proceeds,
+            position_delta=-position.quantity,
+            notional=proceeds,
+            fee=None,
+            rebate_estimate=None,
+            realized_pnl=realized,
+            unrealized_pnl=None,
+            observation_id=None,
+            assumptions={**dict(assumptions), "payout_per_share": str(payout)},
+        )
+        position.realized_pnl += realized
+        self.state.realized_pnl += realized
+        position.quantity = ZERO
+        position.cost_basis = ZERO
+        return realized
+
     def _append(
         self,
         *,
@@ -217,6 +283,21 @@ class AppendOnlyLedger:
             exposure += value
             unrealized += value - position.cost_basis
         report_warnings = list(warnings or [])
+        coverage = dict(data_coverage or {})
+        unmarked_carried: list[str] = []
+        if self._account_mode:
+            # Carried positions this run never traded are outside this run's marks.
+            traded = {fill.asset_id for fill in self.state.fills}
+            unmarked_carried = [
+                asset_id
+                for asset_id in missing_marks
+                if asset_id in self._carried and asset_id not in traded
+            ]
+            missing_marks = [a for a in missing_marks if a not in unmarked_carried]
+        if unmarked_carried:
+            coverage["unrealized_pnl_covers"] = "marked_positions_only"
+            coverage["unmarked_carried_positions"] = unmarked_carried
+            coverage["full_account_view"] = "portfolio --mark"
         if missing_marks:
             report_warnings.append(
                 "unrealized_pnl_unknown_without_mark_price:" + ",".join(missing_marks)
@@ -228,6 +309,8 @@ class AppendOnlyLedger:
             "unrealized_pnl": (
                 "unknown_without_mark"
                 if missing_marks
+                else "marked_positions_only"
+                if unmarked_carried
                 else "derived_from_declared_marks"
                 if positions
                 else "not_applicable"
@@ -247,7 +330,7 @@ class AppendOnlyLedger:
             "orders": len(self.state.orders),
             "warnings": report_warnings,
             "assumptions": {"paper_only": True, **dict(assumptions or {})},
-            "data_coverage": dict(data_coverage or {}),
+            "data_coverage": coverage,
             "uncertainty": uncertainty,
         }
         checksum = sha256_json(report_payload)
@@ -265,7 +348,7 @@ class AppendOnlyLedger:
             orders=len(self.state.orders),
             warnings=tuple(report_warnings),
             assumptions={"paper_only": True, **dict(assumptions or {})},
-            data_coverage=dict(data_coverage or {}),
+            data_coverage=coverage,
             checksum=checksum,
             uncertainty=uncertainty,
         )

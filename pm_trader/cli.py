@@ -23,6 +23,7 @@ from .workflows import (
     envelope,
     load_book_fixture,
     load_market_fixture,
+    DISCOVERY_ORDERS,
     scan_market,
 )
 
@@ -57,6 +58,15 @@ def _parser() -> argparse.ArgumentParser:
     discover.add_argument("--limit", type=int, default=20)
     discover.add_argument("--cursor")
     discover.add_argument("--fixture", type=Path)
+    discover.add_argument(
+        "--order",
+        choices=sorted(DISCOVERY_ORDERS),
+        help="rank keyset results (largest first unless --ascending)",
+    )
+    discover.add_argument("--ascending", action="store_true", help="sort smallest first")
+    discover.add_argument(
+        "--open-only", action="store_true", help="only active markets that are not closed"
+    )
 
     market = sub.add_parser(
         "market", aliases=["markets"], help="market discovery and inspection aliases"
@@ -73,6 +83,49 @@ def _parser() -> argparse.ArgumentParser:
     market_get.add_argument("identifier")
     market_get.add_argument("--fixture", type=Path)
 
+    quote = sub.add_parser(
+        "quote", help="live market rules plus best-first order-book summary per outcome"
+    )
+    quote.add_argument("identifier", help="market slug or 0x condition id")
+    quote.add_argument("--outcome", help="quote one outcome (default: every outcome)")
+    quote.add_argument("--depth", type=int, default=5, help="book levels per side (1-50)")
+    quote.add_argument(
+        "--side",
+        choices=("buy", "sell"),
+        help="with --size and --outcome: estimate a taker fill against the live book",
+    )
+    quote.add_argument("--size", type=Decimal, help="shares to estimate (needs --side)")
+    quote.add_argument(
+        "--price", type=Decimal, help="limit price for the estimate (worse levels are skipped)"
+    )
+    quote.add_argument(
+        "--compact",
+        action="store_true",
+        help="per book: best bid/ask, midpoint, spread, age, depth within 1c only",
+    )
+
+    prices = sub.add_parser("prices", help="live price history and summary for one outcome")
+    prices.add_argument("identifier", help="market slug or 0x condition id")
+    prices.add_argument("--outcome", default="Yes")
+    prices.add_argument(
+        "--interval", default="1w", choices=("1h", "6h", "1d", "1w", "1m", "max", "all")
+    )
+    prices.add_argument("--fidelity", type=int, help="bar size in minutes")
+    prices.add_argument("--max-points", type=int, default=120)
+
+    portfolio = sub.add_parser(
+        "portfolio", help="net paper positions across every stored run in this data directory"
+    )
+    portfolio.add_argument(
+        "--mark", action="store_true", help="mark open positions to the live book midpoint"
+    )
+
+    settle = sub.add_parser(
+        "settle", help="pay out account positions in a resolved market at its final prices"
+    )
+    settle.add_argument("identifier", nargs="?", help="market slug or 0x condition id")
+    settle.add_argument("--market-fixture", type=Path, help="offline market JSON instead")
+
     inspect = sub.add_parser("inspect", help="inspect market or book")
     inspect_sub = inspect.add_subparsers(dest="inspect_command", required=True)
     inspect_market = inspect_sub.add_parser("market")
@@ -81,8 +134,11 @@ def _parser() -> argparse.ArgumentParser:
     inspect_book.add_argument("--fixture", type=Path, required=True)
 
     simulate = sub.add_parser("simulate", help="simulate paper orders against a declared book")
-    simulate.add_argument("--market-fixture", type=Path, required=True)
-    simulate.add_argument("--book-fixture", type=Path, required=True)
+    simulate.add_argument(
+        "--market", help="live market slug or 0x condition id (fetches the live book)"
+    )
+    simulate.add_argument("--market-fixture", type=Path)
+    simulate.add_argument("--book-fixture", type=Path)
     simulate.add_argument("--order-id", default="cli-order-1")
     simulate.add_argument("--side", choices=("buy", "sell"), default="buy")
     simulate.add_argument("--outcome", default="Yes")
@@ -93,6 +149,11 @@ def _parser() -> argparse.ArgumentParser:
     simulate.add_argument("--starting-cash", type=Decimal, default=Decimal(10000))
     simulate.add_argument("--latency-ms", type=int, default=0)
     simulate.add_argument("--dataset-id")
+    simulate.add_argument(
+        "--isolated",
+        action="store_true",
+        help="one-off run from --starting-cash with no positions, outside the data-dir account",
+    )
 
     replay = sub.add_parser("replay", help="replay a bounded recorded JSONL dataset")
     replay.add_argument("--dataset", type=Path, required=True)
@@ -335,7 +396,12 @@ def _run_parsed(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
                 args,
                 0,
                 ResearchService(store, limits=ResourceLimits()).discover(
-                    query=args.query, limit=args.limit, cursor=args.cursor
+                    query=args.query,
+                    limit=args.limit,
+                    cursor=args.cursor,
+                    order=args.order,
+                    ascending=True if args.ascending else None,
+                    open_only=args.open_only,
                 ),
             )
         if args.command in {"market", "markets"}:
@@ -393,23 +459,71 @@ def _run_parsed(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
                     provenance_ids=(book.provenance.observation_id,) if book.provenance else (),
                 ),
             )
-        if args.command == "simulate":
-            market = load_market_fixture(args.market_fixture)
-            args._activity_market = market.question or market.slug
-            book = load_book_fixture(args.book_fixture)
-            order = _order(args, market)
-            config = SimulationConfig(starting_cash=args.starting_cash, latency_ms=args.latency_ms)
+        if args.command == "quote":
             return _logged(
                 args,
                 0,
-                ResearchService(store).simulate(
-                    market=market,
-                    book=book,
-                    orders=(order,),
-                    config=config,
-                    dataset_id=args.dataset_id,
+                ResearchService(store).quote(
+                    args.identifier,
+                    outcome=args.outcome,
+                    depth=args.depth,
+                    side=args.side,
+                    size=args.size,
+                    price=args.price,
+                    compact=args.compact,
                 ),
             )
+        if args.command == "prices":
+            return _logged(
+                args,
+                0,
+                ResearchService(store).price_history(
+                    args.identifier,
+                    outcome=args.outcome,
+                    interval=args.interval,
+                    fidelity=args.fidelity,
+                    max_points=args.max_points,
+                ),
+            )
+        if args.command == "settle":
+            service = ResearchService(store)
+            if bool(args.identifier) == bool(args.market_fixture):
+                raise ValueError("settle needs a market identifier or --market-fixture")
+            market = (
+                load_market_fixture(args.market_fixture)
+                if args.market_fixture
+                else service._market(args.identifier)
+            )
+            payload = service.settle(market)
+            return _logged(args, 0 if payload["ok"] else 1, payload)
+        if args.command == "portfolio":
+            return _logged(args, 0, ResearchService(store).portfolio(mark=args.mark))
+        if args.command == "simulate":
+            service = ResearchService(store)
+            if args.market:
+                if args.market_fixture or args.book_fixture:
+                    raise ValueError("use --market or the fixture options, not both")
+                market = service._market(args.market)
+                book = service.live_book(market, args.outcome)
+            else:
+                if not (args.market_fixture and args.book_fixture):
+                    raise ValueError(
+                        "simulate needs --market, or both --market-fixture and --book-fixture"
+                    )
+                market = load_market_fixture(args.market_fixture)
+                book = load_book_fixture(args.book_fixture)
+            args._activity_market = market.question or market.slug
+            order = _order(args, market)
+            config = SimulationConfig(starting_cash=args.starting_cash, latency_ms=args.latency_ms)
+            payload = service.simulate(
+                market=market,
+                book=book,
+                orders=(order,),
+                config=config,
+                dataset_id=args.dataset_id,
+                account=not args.isolated,
+            )
+            return _logged(args, 0 if payload["ok"] else 1, payload)
         if args.command == "replay":
             market = load_market_fixture(args.market_fixture)
             args._activity_market = market.question or market.slug

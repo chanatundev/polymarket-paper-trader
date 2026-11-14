@@ -96,6 +96,7 @@ class SimulationEngine:
         mark_prices: Mapping[str, Decimal] | None = None,
         extra_warnings: list[str] | None = None,
         data_coverage: Mapping[str, Any] | None = None,
+        opening_positions: Mapping[str, Any] | None = None,
     ) -> SimulationResult:
         return self.run_stream(
             market=market,
@@ -107,6 +108,7 @@ class SimulationEngine:
             mark_prices=mark_prices,
             extra_warnings=extra_warnings,
             data_coverage=data_coverage,
+            opening_positions=opening_positions,
         )
 
     def run_stream(
@@ -121,6 +123,7 @@ class SimulationEngine:
         mark_prices: Mapping[str, Decimal] | None = None,
         extra_warnings: list[str] | None = None,
         data_coverage: Mapping[str, Any] | None = None,
+        opening_positions: Mapping[str, Any] | None = None,
     ) -> SimulationResult:
         config = config or SimulationConfig()
         snapshot_list = tuple(snapshots)
@@ -149,7 +152,10 @@ class SimulationEngine:
             config=config,
         )
         ledger = AppendOnlyLedger(
-            self.store, run_id=resolved_run_id, starting_cash=config.starting_cash
+            self.store,
+            run_id=resolved_run_id,
+            starting_cash=config.starting_cash,
+            opening_positions=opening_positions,
         )
         matches: list[MatchResult] = []
         warnings = list(extra_warnings or [])
@@ -314,6 +320,17 @@ class SimulationEngine:
                     freshness=match.decision.freshness,
                     provenance_ids=match.decision.provenance_ids,
                     assumptions={"paper_only": True},
+                    checks={
+                        asset_id: {
+                            "required_quantity": str(quantity),
+                            "available_quantity": str(
+                                ledger.state.positions[asset_id].quantity
+                                if asset_id in ledger.state.positions
+                                else ZERO
+                            ),
+                        }
+                        for asset_id, quantity in required_sell_quantity.items()
+                    },
                 ),
                 remaining_quantity=current_order.effective_quantity(),
             )

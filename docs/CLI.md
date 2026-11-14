@@ -116,6 +116,19 @@ Other methods return `405 Method Not Allowed`. JSON responses use the same
 the UI states that paper fills and P&L are model outputs, not live execution or
 realized cash.
 
+## Paper dashboard
+
+An optional read-only dashboard shows the account, positions, and recent
+activity for a data directory. It is a global flag, not a subcommand:
+
+```bash
+uv run python -m pm_trader --data-dir .pm-trader --dashboard
+uv run python -m pm_trader --data-dir .pm-trader --dashboard --dashboard-port 0
+```
+
+It binds to `127.0.0.1` (default port 8766; `0` picks a free port), makes no
+provider requests, and has no order or fund controls.
+
 ## Discovery
 
 ### List markets
@@ -137,10 +150,36 @@ uv run python -m pm_trader discover \
 ```
 
 `--limit` is bounded to 100 for keyset pages. List and search results are scan
-rows: condition id, slug, question, start and end time, lifecycle flags,
-freshness, and provenance id. Missing start or end times stay null with an
+rows: condition id, slug, question, start and end time, lifecycle flags, and
+provenance id (freshness is on the envelope). Missing start or end times stay null with an
 `unknown_reasons` entry. Use `inspect market` or `market get` for the full
 canonical record, including tokens, fees, and unknown provider fields.
+
+Rank and filter keyset pages with `--order` (`volume_24hr`, `volume`,
+`liquidity`, `end_date`, `start_date`; largest first unless `--ascending`) and
+`--open-only` (active, not closed):
+
+```bash
+uv run python -m pm_trader discover --order volume_24hr --open-only --limit 20
+```
+
+Each scan row includes `outcomes` (label and `indicative_price`, Gamma's last
+reported price, which can lag the book) and, when
+Gamma reports them, `stats`: `volume_24hr`, `volume_1wk`, `volume`,
+`liquidity`, `best_bid`, `best_ask`, `spread`, `last_trade_price`,
+`one_day_price_change`, and `one_week_price_change`. These are indicative, not
+executable; use `quote` for the live book.
+
+Gamma listings carry no provider timestamp, so the envelope `freshness` stays
+`unknown`. Live `discover` results add `result.retrieved_at` (ISO-8601 UTC, when
+we fetched the listing) and an assumption `listing_freshness:
+"provider_has_no_timestamp; see retrieved_at"`. Fixture runs omit both.
+
+Rows also carry `hours_to_end` (hours from now to `end_time`, one decimal string,
+negative once passed, `null` if unknown). `quote` also adds `ends_within_24h`
+(true only when the end is 0-24h away; false when unknown or already past). A date-only
+`end_time` such as `2026-11-14` is assumed to end at the end of that day in UTC
+(the envelope's `date_only_end_time_is_end_of_day_utc` assumption records this).
 
 ### Search public markets
 
@@ -176,6 +215,131 @@ uv run python -m pm_trader market get will-the-example-event-happen-by-2030
 Without `--fixture`, `market get` resolves a slug through Gamma. An identifier
 starting with `0x` is resolved through the public CLOB market-info route.
 
+## Live market data for agents
+
+These commands make bounded, unauthenticated public reads and return compact,
+decision-ready numbers. Use them between discovery and simulation.
+
+### Quote a market
+
+```bash
+uv run python -m pm_trader quote xi-jinping-out-before-2027
+uv run python -m pm_trader quote xi-jinping-out-before-2027 --outcome Yes --depth 10
+uv run python -m pm_trader quote xi-jinping-out-before-2027 --outcome Yes --side buy --size 50
+uv run python -m pm_trader quote xi-jinping-out-before-2027 --outcome Yes --side sell --size 50 --price 0.40
+uv run python -m pm_trader quote xi-jinping-out-before-2027 --compact
+```
+
+The result has the market's trading rules (`tick_size`, `min_order_size`,
+`neg_risk`, `fees_enabled`, `fee_schedule`), outcomes with token ids, and one
+book summary per outcome (or only `--outcome`): `best_bid`, `best_ask`,
+`midpoint`, `spread`, level counts, best-first `bids`/`asks` up to `--depth`
+(1-50, default 5), and `depth_near_mid` (shares and notional within 1c and 5c of
+the midpoint). Book timestamps are ISO-8601 UTC. The market block also has
+`hours_to_end` and `ends_within_24h` (see Discover).
+
+**Book age and freshness.** Each book has `age_seconds` (`received_at` minus
+`provider_timestamp`; the provider timestamp may be unix milliseconds) and a
+`freshness` of `fresh` (age <= 30s), `stale`, or `unknown` (age not computable).
+The envelope `freshness` is the worst of the books (`unknown` > `stale` >
+`fresh`). This is display only; the simulator's own freshness gate is separate.
+
+**Fees.** `fee_schedule.formula` states how fees are computed, mirroring
+`pm_trader/fees.py`: `fee = shares * rate * (price * (1 - price)) ** exponent`,
+charged per fill level at that level's price, taker only (makers pay 0),
+rounded to 5 decimals. (Legacy base-fee schedules use
+`shares * rate * price * (1 - price)`.) With `fees_enabled: false` the fee is 0.
+
+**Pre-trade estimate.** `--side buy|sell --size N [--price LIMIT]` with
+`--outcome` adds `result.estimate`, a taker walk of that outcome's live book:
+buys consume asks and sells consume bids, best price first, stopping at the
+limit price if given. Nothing is simulated or stored. Fields: `side`,
+`requested_size`, `limit_price`, `fillable_size`, `fully_fillable`, `vwap`,
+`worst_price`, `levels_used`, `notional`, `estimated_fee` (summed per level
+exactly as the matcher charges it; `null` if the fee schedule is unknown, `"0"`
+if fees are disabled), `slippage_vs_mid` (`vwap - mid` for buys, `mid - vwap`
+for sells), `immediate_mark_loss` (`fillable_size * |vwap - mid| +
+estimated_fee`, the loss against the midpoint the instant you fill), `midpoint`,
+and `warnings`: `below_min_order_size`, `price_not_on_tick`, `partial_fill`,
+`no_fill`, `fees_disabled`, `fee_schedule_unknown`,
+`immediate_mark_loss_excludes_fee`, `midpoint_unavailable`. `--side` and
+`--size` must be given together, and an estimate requires `--outcome`.
+
+**Compact.** `--compact` keeps per book only `outcome`, `best_bid`, `best_ask`,
+`midpoint`, `spread`, `age_seconds`, and `depth_near_mid.within_1c`; level lists
+are dropped. The market block, envelope freshness, and any `estimate` are
+unchanged.
+
+### Price history
+
+```bash
+uv run python -m pm_trader prices xi-jinping-out-before-2027 --outcome Yes \
+  --interval 1w --fidelity 60 --max-points 120
+```
+
+Returns `open`, `close`, `high`, `low`, `change`, `start`/`end`, the raw point
+count, and an evenly downsampled `points` series (`--max-points`, 1-1000,
+always including the last point). Intervals: `1h`, `6h`, `1d`, `1w`, `1m`,
+`max`, `all`. History is context, not an executable price.
+
+### Paper portfolio
+
+```bash
+uv run python -m pm_trader --data-dir .pm-trader portfolio
+uv run python -m pm_trader --data-dir .pm-trader portfolio --mark
+```
+
+Shows the persistent paper account (see [The paper account](#the-paper-account)):
+`cash`, `starting_cash`, and one row per position the account has traded, with
+`market_slug`, `market_question`, `outcome`, `status` (`open`, `closed`, or
+`settled`), `quantity`, `average_price`, `cost_basis`, `realized_pnl`, `fees`,
+and `fills`. `--isolated` runs are not included; `isolated_fills_not_in_account`
+counts them.
+
+There is one P&L convention everywhere (`simulate`, `portfolio`, `settle`):
+
+- `cost_basis` includes buy fees, so `average_price` is the fee-inclusive
+  break-even price per share.
+- `realized_pnl` is net of all fees: sell proceeds minus average cost minus the
+  sell fee, or settlement payout minus cost.
+- `fees` is shown for information only; it is already inside the two numbers above.
+- `net_pnl` = `realized_pnl` + `unrealized_pnl` (0 if unmarked).
+
+`--mark` reads the live book for up to 25 open positions and adds `mark_price`
+(midpoint), `market_value`, and `unrealized_pnl`. `totals` sums `cost_basis`,
+`market_value` and `unrealized_pnl` (marked positions only; `null` without
+`--mark`), `realized_pnl`, `fees`, and `net_pnl`, plus `equity` (cash + market
+value) when marked. Unrealized P&L is midpoint-based and excludes the fees you
+would pay to exit, so it overstates what closing would realize. With `--mark`,
+each marked book has an age and the envelope `freshness` is the worst of them
+(same rule as `quote`). Positions that could not be marked add warnings: a
+`mark_unavailable` warning usually means the market has closed, so try `settle`.
+
+### Settle a resolved market
+
+```bash
+uv run python -m pm_trader settle <slug>
+```
+
+Once a market is closed with final outcome prices (each 0, 0.5, or 1, summing
+to 1), `settle` pays out every account position in it at that price per share:
+winners at 1, losers at 0. It records a settlement run whose ledger has one
+`resolution` entry per position, returns `settled` (outcome, quantity,
+`payout_per_share`, `proceeds`, `realized_pnl`) and the updated `account`, and
+marks the position `settled` in `portfolio`. Settling again is a no-op with a
+`no_open_account_position_in_market` warning. While the market is still open
+it returns `MARKET_NOT_RESOLVED` with `ok: false` and exit status 1. Slugs of
+closed markets resolve too: the lookup falls back to closed markets.
+`--market-fixture` settles from offline JSON.
+
+### MCP tools
+
+The MCP server exposes the same data as `quote_market`, `price_history`,
+`paper_portfolio`, and `settle_market`. `quote_market` also accepts `side`, `size`, `price` (the
+estimate; `outcome` required) and `compact`. `discover_markets` accepts `order`, `ascending`, and
+`open_only`; `inspect_market`, `inspect_book`, and `simulate` accept a live
+`market` (slug or condition id) in place of fixture paths.
+
 ## Inspect normalized state
 
 Inspection is fixture-based and does not make a network request:
@@ -198,8 +362,63 @@ by the simulation examples below.
 
 ## Simulate a paper order
 
-`simulate` matches one paper order against one declared book fixture and persists
-the report in the selected SQLite data directory:
+`simulate` matches one paper order against one book and persists the report in
+the selected SQLite data directory. Pass `--market` to match against the live
+public order book:
+
+```bash
+uv run python -m pm_trader --data-dir .pm-trader simulate \
+  --market xi-jinping-out-before-2027 --outcome Yes \
+  --side buy --price 0.02 --size 100 --tif fak --order-id live-1
+```
+
+### The paper account
+
+By default every `simulate` trades one persistent paper account per data
+directory. A run opens with the cash and positions left by earlier account runs,
+so you can sell what you bought before:
+
+```bash
+uv run python -m pm_trader simulate --market <slug> --outcome No --side buy  --price 0.99 --size 20 --tif fak --order-id b1
+uv run python -m pm_trader simulate --market <slug> --outcome No --side sell --price 0.97 --size 10 --tif fak --order-id s1
+```
+
+The first account run deposits `--starting-cash` (default 10000); later runs
+recompute the balance from that deposit plus every account fill and fee. Pass
+the same `--starting-cash` each time or leave it at the default. Each run's
+`report.starting_cash` and `report.cash` are the account balance before and
+after that run, and positions held from earlier runs appear as
+`opening_position` ledger entries (no cash moves). `--isolated` runs a one-off
+simulation from `--starting-cash` with no positions and leaves the account
+untouched. `replay` is always isolated.
+
+Every simulate result has:
+
+- `summary`: one row per order with `outcome` (`filled`, `partially_filled`,
+  `resting`, or `rejected`), `reason_code`, `reasons`, `filled_quantity`,
+  `remaining_quantity`, `average_price`, `notional`, and `fees`.
+- `account` (account mode): `cash`, `open_positions` (the same labelled rows as
+  `portfolio`), `realized_pnl`, `fees`, `fills`, and `runs` (account runs that
+  filled or settled something; rejected orders don't count).
+
+In account mode the report's unrealized P&L covers only positions this run
+marked (the traded book's midpoint). Carried positions this run did not trade
+are not fetched and do not add a missing-mark warning; instead
+`report.data_coverage` has `unrealized_pnl_covers: "marked_positions_only"`,
+`unmarked_carried_positions` (token ids), and `full_account_view: "portfolio
+--mark"`, and `report.uncertainty.unrealized_pnl` is `marked_positions_only`.
+Use `portfolio --mark` for the whole account. Positions the run traded but could
+not mark still warn `unrealized_pnl_unknown_without_mark_price`.
+
+A rejected order returns `ok: false`, exit status `1`, and an `errors` entry
+with the reason code (for example `TICK_SIZE_VIOLATION`,
+`INSUFFICIENT_POSITION`, `INSUFFICIENT_CASH`) and `order_id`. An
+`INSUFFICIENT_POSITION` decision lists the required and available quantity in
+`decision.checks`.
+
+### Offline runs
+
+Pass both fixture options for an offline, reproducible run:
 
 ```bash
 uv run python -m pm_trader --data-dir .pm-trader-demo simulate \
@@ -225,6 +444,8 @@ Available simulation options:
 
 | Option | Default | Meaning |
 | --- | --- | --- |
+| `--market` | unset | Live market slug or `0x` condition id; fetches the live book. |
+| `--market-fixture` / `--book-fixture` | unset | Offline market and book JSON; use both instead of `--market`. |
 | `--order-id` | `cli-order-1` | Stable paper-order identifier. |
 | `--side` | `buy` | `buy` or `sell`. |
 | `--outcome` | `Yes` | Outcome label or token resolved from the market fixture. |
@@ -232,9 +453,10 @@ Available simulation options:
 | `--size` | `10` | Decimal order quantity. |
 | `--tif` | `fok` | `gtc`, `gtd`, `fak`, or `fok`. |
 | `--post-only` | off | Reject if the paper order would immediately take liquidity. |
-| `--starting-cash` | `10000` | Paper cash available for settlement. |
+| `--starting-cash` | `10000` | Account opening deposit, or the cash for an `--isolated` run. |
 | `--latency-ms` | `0` | Declared paper latency before matching. |
 | `--dataset-id` | unset | Optional dataset label included in run identity and coverage. |
+| `--isolated` | off | Run outside the persistent account: fresh `--starting-cash`, no positions. |
 
 Matching is fail-closed. Closed or inactive markets, stale or inconsistent books,
 identity mismatches, invalid tick/size values, missing fee schedules, insufficient
@@ -330,7 +552,7 @@ For valid invocations, exit status has this meaning:
 | Exit status | Meaning |
 | --- | --- |
 | `0` | The workflow completed with `ok: true`. Warnings can still be present. |
-| `1` | The envelope is `ok: false`, including a missing report or a response that cannot fit the size cap. |
+| `1` | The envelope is `ok: false`, including a rejected paper order, a missing report, or a response that cannot fit the size cap. |
 | `2` | Provider, network, malformed-payload, or local-validation failure. |
 
 `--help` uses standard `argparse` text output. Execution responses remain JSON and
