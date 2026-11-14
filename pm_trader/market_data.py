@@ -7,7 +7,6 @@ movement, and current paper exposure. They never create orders or call providers
 
 from __future__ import annotations
 
-import json
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import datetime, timedelta, timezone
@@ -148,7 +147,8 @@ def market_outcomes(market: MarketState, *, token_ids: bool = False) -> list[dic
     rows = []
     for index, token in enumerate(market.tokens):
         price = market.outcome_prices[index] if index < len(market.outcome_prices) else None
-        row: dict[str, Any] = {"outcome": token.outcome, "price": _text(price)}
+        # Gamma's last indicative price: a hint that lags the book; quote has the live mid.
+        row: dict[str, Any] = {"outcome": token.outcome, "indicative_price": _text(price)}
         if token_ids:
             row["token_id"] = token.token_id
         rows.append(row)
@@ -403,72 +403,12 @@ def price_summary(
     }
 
 
-def aggregate_positions(
-    fills: Iterable[Mapping[str, Any]], orders: Mapping[tuple[str, str], Mapping[str, Any]]
-) -> list[dict[str, Any]]:
-    """Average-cost net position per asset across every stored paper fill."""
-
-    book: dict[str, dict[str, Any]] = {}
-    for fill in fills:
-        asset = str(fill.get("asset_id"))
-        quantity = _dec(fill.get("quantity")) or Decimal(0)
-        price = _dec(fill.get("price")) or Decimal(0)
-        fee = _dec(fill.get("fee")) or Decimal(0)
-        order = orders.get((str(fill.get("run_id")), str(fill.get("order_id")))) or {}
-        metadata = order.get("metadata") if isinstance(order.get("metadata"), Mapping) else {}
-        row = book.setdefault(
-            asset,
-            {
-                "asset_id": asset,
-                "market_id": order.get("market_id"),
-                "market_question": metadata.get("market_question"),
-                "market_slug": metadata.get("market_slug"),
-                "outcome": metadata.get("outcome"),
-                "quantity": Decimal(0),
-                "cost_basis": Decimal(0),
-                "realized_pnl": Decimal(0),
-                "fees": Decimal(0),
-                "fills": 0,
-            },
-        )
-        row["fills"] += 1
-        row["fees"] += fee
-        if fill.get("side") == "buy":
-            row["quantity"] += quantity
-            row["cost_basis"] += quantity * price
-        else:
-            held = row["quantity"]
-            average = row["cost_basis"] / held if held else Decimal(0)
-            closed = min(quantity, held) if held > 0 else Decimal(0)
-            row["realized_pnl"] += closed * (price - average)
-            row["quantity"] -= quantity
-            row["cost_basis"] -= closed * average
-    rows = []
-    for row in book.values():
-        quantity = row["quantity"]
-        rows.append(
-            {
-                **row,
-                "quantity": _text(quantity),
-                "average_price": _text(row["cost_basis"] / quantity) if quantity > 0 else None,
-                "cost_basis": _text(row["cost_basis"]),
-                "realized_pnl": _text(row["realized_pnl"]),
-                "fees": _text(row["fees"]),
-                "net_pnl": _net_pnl(
-                    {"realized_pnl": row["realized_pnl"], "fees": row["fees"]}
-                ),
-            }
-        )
-    rows.sort(key=lambda item: (_dec(item["quantity"]) or Decimal(0)) == 0)
-    return rows
-
-
 def _net_pnl(row: Mapping[str, Any]) -> str:
-    """realized + unrealized - fees; an unmarked position counts as zero unrealized."""
+    """realized (net of fees) + unrealized; an unmarked position counts as zero unrealized."""
 
     realized = _dec(row.get("realized_pnl")) or Decimal(0)
     unrealized = _dec(row.get("unrealized_pnl")) or Decimal(0)
-    return _text(realized + unrealized - (_dec(row.get("fees")) or Decimal(0)))
+    return _text(realized + unrealized)
 
 
 def mark_position(row: dict[str, Any], midpoint: Decimal | None) -> dict[str, Any]:
@@ -487,7 +427,9 @@ def mark_position(row: dict[str, Any], midpoint: Decimal | None) -> dict[str, An
     return {**marked, "net_pnl": _net_pnl(marked)}
 
 
-def portfolio_totals(positions: Iterable[Mapping[str, Any]], *, marked: bool) -> dict[str, Any]:
+def portfolio_totals(
+    positions: Iterable[Mapping[str, Any]], *, marked: bool, cash: Decimal | None = None
+) -> dict[str, Any]:
     """Sum positions. Unrealized/market value cover only positions that were actually marked."""
 
     rows = list(positions)
@@ -498,7 +440,7 @@ def portfolio_totals(positions: Iterable[Mapping[str, Any]], *, marked: bool) ->
     market_value = unrealized = None
     if marked:
         market_value, unrealized = total("market_value"), total("unrealized_pnl")
-    return {
+    totals = {
         "cost_basis": _text(total("cost_basis")),
         "market_value": _text(market_value),
         "realized_pnl": _text(total("realized_pnl")),
@@ -506,22 +448,6 @@ def portfolio_totals(positions: Iterable[Mapping[str, Any]], *, marked: bool) ->
         "fees": _text(total("fees")),
         "net_pnl": _text(total("net_pnl")),
     }
-
-
-def load_stored_fills(conn: Any, *, limit: int) -> tuple[list[dict[str, Any]], dict, bool]:
-    """Read at most ``limit`` fills (oldest first) and their parent orders from SQLite."""
-
-    rows = conn.execute(
-        "SELECT run_id, payload FROM fills ORDER BY rowid LIMIT ?", (limit + 1,)
-    ).fetchall()
-    truncated = len(rows) > limit
-    fills = []
-    for row in rows[:limit]:
-        payload = json.loads(row["payload"])
-        payload["run_id"] = row["run_id"]
-        fills.append(payload)
-    orders = {
-        (row["run_id"], row["order_id"]): json.loads(row["payload"])
-        for row in conn.execute("SELECT run_id, order_id, payload FROM orders").fetchall()
-    }
-    return fills, orders, truncated
+    if cash is not None and market_value is not None:
+        totals["equity"] = _text(cash + market_value)
+    return totals

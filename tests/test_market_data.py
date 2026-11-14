@@ -13,7 +13,6 @@ from pm_trader.api import CLOB_BASE, GAMMA_BASE, CLOBAdapter, FixtureTransport, 
 from pm_trader.cli import run
 from pm_trader.errors import LocalValidationError
 from pm_trader.market_data import (
-    aggregate_positions,
     book_age_seconds,
     book_summary,
     estimate_fill,
@@ -82,26 +81,11 @@ def test_price_summary_downsamples_and_keeps_last_point():
     assert len(summary["points"]) <= 4
 
 
-def test_aggregate_positions_uses_average_cost():
-    orders = {("r1", "o1"): {"market_id": "m", "metadata": {"outcome": "Yes"}}}
-    fills = [
-        {"run_id": "r1", "order_id": "o1", "asset_id": "a", "side": "buy", "quantity": "10", "price": "0.4", "fee": "0.1"},
-        {"run_id": "r1", "order_id": "o1", "asset_id": "a", "side": "buy", "quantity": "10", "price": "0.6", "fee": "0.1"},
-        {"run_id": "r1", "order_id": "o1", "asset_id": "a", "side": "sell", "quantity": "5", "price": "0.7", "fee": "0"},
-    ]
-    [row] = aggregate_positions(fills, orders)
-    assert row["quantity"] == "15"
-    assert row["average_price"] == "0.5"
-    assert row["realized_pnl"] == "1"
-    assert row["fees"] == "0.2"
-    assert row["outcome"] == "Yes"
-
-
 def test_discovery_rows_carry_outcomes_and_stats(tmp_path: Path):
     service, gamma = offline_service(tmp_path, volume24hr=1234.567, liquidityClob="99", bestBid="0.62")
     payload = service.discover(limit=5, order="volume_24hr", open_only=True)
     row = payload["result"]["markets"][0]
-    assert row["outcomes"][0] == {"outcome": "Yes", "price": "0.64"}
+    assert row["outcomes"][0] == {"outcome": "Yes", "indicative_price": "0.64"}
     assert row["stats"] == {"volume_24hr": "1234.57", "liquidity": "99", "best_bid": "0.62"}
     params = gamma.requests[0][1]
     assert params["order"] == "volume24hr"
@@ -146,9 +130,12 @@ def test_cli_portfolio_aggregates_stored_runs(tmp_path: Path):
     assert code == 0
     [position] = payload["result"]["positions"]
     assert position["quantity"] == "20"
-    assert position["average_price"] == "0.66"
+    # Fee-inclusive break-even: above the 0.66 fill price by the per-share fee.
+    assert Decimal(position["average_price"]) > Decimal("0.66")
+    assert Decimal(position["average_price"]) * 20 == Decimal(position["cost_basis"])
     assert position["outcome"] == "Yes"
-    assert payload["assumptions"]["aggregates_independent_runs"] is True
+    assert position["status"] == "open"
+    assert payload["assumptions"]["scope"] == "persistent_account"
 
 
 def test_cli_simulate_requires_a_market_source(tmp_path: Path):
@@ -360,34 +347,28 @@ def test_compact_quote_drops_level_lists(tmp_path: Path):
 
 
 def test_net_pnl_and_totals_for_unmarked_and_marked_positions():
-    orders = {("r1", "o1"): {"market_id": "m", "metadata": {"outcome": "Yes"}}}
-    fills = [
-        {"run_id": "r1", "order_id": "o1", "asset_id": "a", "side": "buy", "quantity": "10", "price": "0.4", "fee": "0.1"},
-        {"run_id": "r1", "order_id": "o1", "asset_id": "a", "side": "sell", "quantity": "4", "price": "0.5", "fee": "0.05"},
-        {"run_id": "r1", "order_id": "o1", "asset_id": "b", "side": "buy", "quantity": "10", "price": "0.5", "fee": "0.2"},
-    ]
-    rows = aggregate_positions(fills, orders)
-    by_asset = {row["asset_id"]: row for row in rows}
-    assert by_asset["a"]["realized_pnl"] == "0.4"  # 4 * (0.5 - 0.4)
-    assert by_asset["a"]["net_pnl"] == "0.25"  # 0.4 - 0.15 fees, unrealized counted as 0
-    assert by_asset["b"]["net_pnl"] == "-0.2"
-    unmarked = portfolio_totals(rows, marked=False)
+    # Rows follow the account convention: fees inside cost basis, realized net of fees.
+    a = {"asset_id": "a", "status": "open", "quantity": "6", "cost_basis": "2.46",
+         "realized_pnl": "0.31", "fees": "0.15"}
+    b = {"asset_id": "b", "status": "open", "quantity": "10", "cost_basis": "5.2",
+         "realized_pnl": "0", "fees": "0.2"}
+    unmarked = portfolio_totals([mark_position(a, None), mark_position(b, None)], marked=False)
     assert unmarked == {
-        "cost_basis": "7.4", "market_value": None, "realized_pnl": "0.4",
-        "unrealized_pnl": None, "fees": "0.35", "net_pnl": "0.05",
+        "cost_basis": "7.66", "market_value": None, "realized_pnl": "0.31",
+        "unrealized_pnl": None, "fees": "0.35", "net_pnl": "0.31",
     }
-    marked = [mark_position(by_asset["a"], Decimal("0.6")), mark_position(by_asset["b"], None)]
-    assert marked[0]["unrealized_pnl"] == "1.2"  # 6 * 0.6 - 6 * 0.4
-    assert marked[0]["net_pnl"] == "1.45"  # 0.4 + 1.2 - 0.15
-    assert marked[1]["net_pnl"] == "-0.2"
-    totals = portfolio_totals(marked, marked=True)
-    assert totals["market_value"] == "3.6" and totals["unrealized_pnl"] == "1.2"
-    assert totals["net_pnl"] == "1.25" and totals["cost_basis"] == "7.4"
+    marked = [mark_position(a, Decimal("0.6")), mark_position(b, None)]
+    assert marked[0]["unrealized_pnl"] == "1.14"  # 6 * 0.6 - 2.46
+    assert marked[0]["net_pnl"] == "1.45"  # 0.31 + 1.14; fees already inside both
+    assert marked[1]["net_pnl"] == "0"
+    totals = portfolio_totals(marked, marked=True, cash=Decimal("100"))
+    assert totals["market_value"] == "3.6" and totals["unrealized_pnl"] == "1.14"
+    assert totals["net_pnl"] == "1.45" and totals["equity"] == "103.6"
 
 
 def test_portfolio_totals_and_mark_freshness_end_to_end(tmp_path: Path):
     data_dir = tmp_path / "db"
-    code, _ = run(
+    code, bought = run(
         [
             "--data-dir", str(data_dir), "simulate",
             "--market-fixture", str(MARKET_FIXTURE),
@@ -396,10 +377,11 @@ def test_portfolio_totals_and_mark_freshness_end_to_end(tmp_path: Path):
         ]
     )
     assert code == 0
+    cost = Decimal("6.6") + Decimal(bought["result"]["summary"][0]["fees"])
     code, payload = run(["--data-dir", str(data_dir), "portfolio"])
     assert code == 0
     totals = payload["result"]["totals"]
-    assert totals["cost_basis"] == "6.6" and totals["market_value"] is None
+    assert Decimal(totals["cost_basis"]) == cost and totals["market_value"] is None
     assert totals["net_pnl"] == payload["result"]["positions"][0]["net_pnl"]
     assert payload["assumptions"]["unrealized_pnl_is_midpoint_based_and_excludes_exit_fees"] is True
     assert payload["freshness"] == "unknown"
@@ -414,6 +396,6 @@ def test_portfolio_totals_and_mark_freshness_end_to_end(tmp_path: Path):
         assert marked["freshness"] == expected
         [position] = marked["result"]["positions"]
         assert position["mark_price"] == "0.64"
-        assert position["unrealized_pnl"] == "-0.2"  # 10 * 0.64 - 6.6
-        assert marked["result"]["totals"]["unrealized_pnl"] == "-0.2"
+        assert Decimal(position["unrealized_pnl"]) == Decimal("6.4") - cost
+        assert Decimal(marked["result"]["totals"]["unrealized_pnl"]) == Decimal("6.4") - cost
         assert marked["result"]["totals"]["market_value"] == "6.4"

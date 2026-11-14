@@ -181,6 +181,40 @@ class AppendOnlyLedger:
         self.state.fills.append(fill)
         self.store.insert_fill(self.state.run_id, fill)
 
+    def resolve(
+        self, asset_id: str, *, payout_per_share: Decimal, assumptions: Mapping[str, Any]
+    ) -> Decimal:
+        """Close a held position at its resolution payout; returns realized P&L."""
+
+        payout = decimal(payout_per_share, field="payout_per_share")
+        if payout < ZERO or payout > Decimal(1):
+            raise LocalValidationError("resolution payout must be between 0 and 1")
+        position = self.state.positions.get(asset_id)
+        if position is None or position.quantity <= ZERO:
+            raise LocalValidationError("no paper position to resolve", details={"asset_id": asset_id})
+        proceeds = position.quantity * payout
+        realized = proceeds - position.cost_basis
+        self._append(
+            kind=LedgerKind.RESOLUTION.value,
+            asset_id=asset_id,
+            order_id=None,
+            fill_id=None,
+            cash_delta=proceeds,
+            position_delta=-position.quantity,
+            notional=proceeds,
+            fee=None,
+            rebate_estimate=None,
+            realized_pnl=realized,
+            unrealized_pnl=None,
+            observation_id=None,
+            assumptions={**dict(assumptions), "payout_per_share": str(payout)},
+        )
+        position.realized_pnl += realized
+        self.state.realized_pnl += realized
+        position.quantity = ZERO
+        position.cost_basis = ZERO
+        return realized
+
     def _append(
         self,
         *,

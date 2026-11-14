@@ -116,6 +116,19 @@ Other methods return `405 Method Not Allowed`. JSON responses use the same
 the UI states that paper fills and P&L are model outputs, not live execution or
 realized cash.
 
+## Paper dashboard
+
+An optional read-only dashboard shows the account, positions, and recent
+activity for a data directory. It is a global flag, not a subcommand:
+
+```bash
+uv run python -m pm_trader --data-dir .pm-trader --dashboard
+uv run python -m pm_trader --data-dir .pm-trader --dashboard --dashboard-port 0
+```
+
+It binds to `127.0.0.1` (default port 8766; `0` picks a free port), makes no
+provider requests, and has no order or fund controls.
+
 ## Discovery
 
 ### List markets
@@ -137,8 +150,8 @@ uv run python -m pm_trader discover \
 ```
 
 `--limit` is bounded to 100 for keyset pages. List and search results are scan
-rows: condition id, slug, question, start and end time, lifecycle flags,
-freshness, and provenance id. Missing start or end times stay null with an
+rows: condition id, slug, question, start and end time, lifecycle flags, and
+provenance id (freshness is on the envelope). Missing start or end times stay null with an
 `unknown_reasons` entry. Use `inspect market` or `market get` for the full
 canonical record, including tokens, fees, and unknown provider fields.
 
@@ -150,7 +163,8 @@ Rank and filter keyset pages with `--order` (`volume_24hr`, `volume`,
 uv run python -m pm_trader discover --order volume_24hr --open-only --limit 20
 ```
 
-Each scan row includes `outcomes` (label and indicative Gamma price) and, when
+Each scan row includes `outcomes` (label and `indicative_price`, Gamma's last
+reported price, which can lag the book) and, when
 Gamma reports them, `stats`: `volume_24hr`, `volume_1wk`, `volume`,
 `liquidity`, `best_bid`, `best_ask`, `spread`, `last_trade_price`,
 `one_day_price_change`, and `one_week_price_change`. These are indicative, not
@@ -270,27 +284,53 @@ uv run python -m pm_trader --data-dir .pm-trader portfolio
 uv run python -m pm_trader --data-dir .pm-trader portfolio --mark
 ```
 
-Aggregates every stored paper fill in the data directory into net positions
-per outcome token: `quantity`, `average_price`, `cost_basis`, `realized_pnl`
-(average cost, fees excluded), `fees`, and `fills`. `--mark` reads the live
-book for up to 25 open positions and adds `mark_price` (midpoint),
-`market_value`, and `unrealized_pnl`. The portfolio is a read-only roll-up of
-every stored fill, including `--isolated` runs; the `account` returned by
-`simulate` is the tradable balance, and `portfolio` repeats it as `account`.
+Shows the persistent paper account (see [The paper account](#the-paper-account)):
+`cash`, `starting_cash`, and one row per position the account has traded, with
+`market_slug`, `market_question`, `outcome`, `status` (`open`, `closed`, or
+`settled`), `quantity`, `average_price`, `cost_basis`, `realized_pnl`, `fees`,
+and `fills`. `--isolated` runs are not included; `isolated_fills_not_in_account`
+counts them.
 
-Each position also has `net_pnl` = `realized_pnl` + `unrealized_pnl` (counted
-as 0 if unmarked) - `fees`, and the result has a `totals` object: `cost_basis`,
-`market_value` (marked positions only, `null` without `--mark`), `realized_pnl`,
-`unrealized_pnl` (same), `fees`, and `net_pnl`. Unrealized P&L is
-midpoint-based and excludes the fees you would pay to exit, so it overstates
-what closing would realize. With `--mark`, each marked book has an age and the
-envelope `freshness` is the worst of them (same rule as `quote`); positions that
-could not be marked add an `unmarked_open_positions:N` warning.
+There is one P&L convention everywhere (`simulate`, `portfolio`, `settle`):
+
+- `cost_basis` includes buy fees, so `average_price` is the fee-inclusive
+  break-even price per share.
+- `realized_pnl` is net of all fees: sell proceeds minus average cost minus the
+  sell fee, or settlement payout minus cost.
+- `fees` is shown for information only; it is already inside the two numbers above.
+- `net_pnl` = `realized_pnl` + `unrealized_pnl` (0 if unmarked).
+
+`--mark` reads the live book for up to 25 open positions and adds `mark_price`
+(midpoint), `market_value`, and `unrealized_pnl`. `totals` sums `cost_basis`,
+`market_value` and `unrealized_pnl` (marked positions only; `null` without
+`--mark`), `realized_pnl`, `fees`, and `net_pnl`, plus `equity` (cash + market
+value) when marked. Unrealized P&L is midpoint-based and excludes the fees you
+would pay to exit, so it overstates what closing would realize. With `--mark`,
+each marked book has an age and the envelope `freshness` is the worst of them
+(same rule as `quote`). Positions that could not be marked add warnings: a
+`mark_unavailable` warning usually means the market has closed, so try `settle`.
+
+### Settle a resolved market
+
+```bash
+uv run python -m pm_trader settle <slug>
+```
+
+Once a market is closed with final outcome prices (each 0, 0.5, or 1, summing
+to 1), `settle` pays out every account position in it at that price per share:
+winners at 1, losers at 0. It records a settlement run whose ledger has one
+`resolution` entry per position, returns `settled` (outcome, quantity,
+`payout_per_share`, `proceeds`, `realized_pnl`) and the updated `account`, and
+marks the position `settled` in `portfolio`. Settling again is a no-op with a
+`no_open_account_position_in_market` warning. While the market is still open
+it returns `MARKET_NOT_RESOLVED` with `ok: false` and exit status 1. Slugs of
+closed markets resolve too: the lookup falls back to closed markets.
+`--market-fixture` settles from offline JSON.
 
 ### MCP tools
 
-The MCP server exposes the same data as `quote_market`, `price_history`, and
-`paper_portfolio`. `quote_market` also accepts `side`, `size`, `price` (the
+The MCP server exposes the same data as `quote_market`, `price_history`,
+`paper_portfolio`, and `settle_market`. `quote_market` also accepts `side`, `size`, `price` (the
 estimate; `outcome` required) and `compact`. `discover_markets` accepts `order`, `ascending`, and
 `open_only`; `inspect_market`, `inspect_book`, and `simulate` accept a live
 `market` (slug or condition id) in place of fixture paths.
@@ -352,9 +392,9 @@ Every simulate result has:
 - `summary`: one row per order with `outcome` (`filled`, `partially_filled`,
   `resting`, or `rejected`), `reason_code`, `reasons`, `filled_quantity`,
   `remaining_quantity`, `average_price`, `notional`, and `fees`.
-- `account` (account mode): `cash`, `open_positions` (quantity and fee-inclusive
-  cost basis per token), `realized_pnl` (net of sell fees), `fees`, `fills`, and
-  `runs`.
+- `account` (account mode): `cash`, `open_positions` (the same labelled rows as
+  `portfolio`), `realized_pnl`, `fees`, `fills`, and `runs` (account runs that
+  filled or settled something; rejected orders don't count).
 
 A rejected order returns `ok: false`, exit status `1`, and an `errors` entry
 with the reason code (for example `TICK_SIZE_VIOLATION`,

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, replace
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from types import SimpleNamespace
@@ -14,13 +14,13 @@ from typing import Any
 from .activity import append_activity, cli_is_logging, record_command, record_simulation
 from .api import CLOBAdapter, FixtureTransport, GammaAdapter, ResourceLimits
 from .account import ACCOUNT_ID, load_account
+from .ledger import AppendOnlyLedger
+from .serialization import sha256_json
 from .errors import LocalValidationError
 from .market_data import (
-    aggregate_positions,
     book_summary,
     compact_book,
     estimate_fill,
-    load_stored_fills,
     mark_position,
     market_outcomes,
     market_stats,
@@ -80,7 +80,6 @@ def scan_market(market: MarketState, *, now: datetime | None = None) -> dict[str
         "closed": market.closed,
         "accepting_orders": market.accepting_orders,
         "enable_order_book": market.enable_order_book,
-        "freshness": market.freshness.value,
         "provenance_id": market.provenance.observation_id if market.provenance else None,
         "outcomes": market_outcomes(market),
     }
@@ -343,58 +342,153 @@ class ResearchService:
             assumptions={"history_is_context_not_executable": True},
         )
 
-    def portfolio(self, *, mark: bool = False, max_fills: int = 5000) -> dict[str, Any]:
-        """Net paper exposure across every stored run, optionally marked to live midpoints."""
+    def portfolio(self, *, mark: bool = False) -> dict[str, Any]:
+        """The persistent paper account's positions, optionally marked to live midpoints."""
 
-        fills, orders, truncated = load_stored_fills(self.store.conn, limit=max_fills)
-        positions = aggregate_positions(fills, orders)
-        warnings = ["fill_scan_truncated"] if truncated else []
+        state = load_account(self.store.conn)
+        positions = [pos.row() for pos in state.positions.values()]
+        positions.sort(key=lambda row: row["status"] != "open")
+        warnings: list[str] = []
         provenance: list[str] = []
         book_freshness: list[str] = []
+        marked = []
+        for index, row in enumerate(positions):
+            if not mark or row["status"] != "open" or index >= 25:
+                marked.append(mark_position(row, None))
+                continue
+            try:
+                observation = self.clob.get_book(str(row["asset_id"]))
+            except Exception:  # noqa: BLE001 - one failed mark must not hide the rest.
+                warnings.append(
+                    f"mark_unavailable:{row.get('market_slug') or row['asset_id']}"
+                    " (the market may be closed; try settle)"
+                )
+                marked.append(mark_position(row, None))
+                continue
+            provenance.append(observation.provenance.observation_id)
+            summary = book_summary(observation.value, depth=1)
+            book_freshness.append(summary["freshness"])
+            midpoint = summary["midpoint"]
+            marked.append(mark_position(row, None if midpoint is None else Decimal(midpoint)))
+        open_rows = [row for row in marked if row["status"] == "open"]
         if mark:
-            marked = []
-            for index, row in enumerate(positions):
-                quantity = row.get("quantity") or "0"
-                if index >= 25 or quantity in {"0", None}:
-                    marked.append(mark_position(row, None))
-                    continue
-                try:
-                    observation = self.clob.get_book(str(row["asset_id"]))
-                except Exception:  # noqa: BLE001 - one failed mark must not hide the rest.
-                    warnings.append(f"mark_unavailable:{row['asset_id']}")
-                    marked.append(mark_position(row, None))
-                    continue
-                provenance.append(observation.provenance.observation_id)
-                summary = book_summary(observation.value, depth=1)
-                book_freshness.append(summary["freshness"])
-                midpoint = summary["midpoint"]
-                marked.append(mark_position(row, None if midpoint is None else Decimal(midpoint)))
-            positions = marked
-        open_positions = [row for row in positions if row.get("quantity") not in {"0", None}]
-        if mark:
-            unmarked = sum(1 for row in open_positions if row.get("market_value") is None)
+            unmarked = sum(1 for row in open_rows if row.get("market_value") is None)
             if unmarked:
                 warnings.append(f"unmarked_open_positions:{unmarked}")
+        total_fills = self.store.conn.execute("SELECT COUNT(*) FROM fills").fetchone()[0]
         return envelope(
             result={
-                "fills_scanned": len(fills),
-                "open_positions": len(open_positions),
-                "positions": positions,
-                "totals": portfolio_totals(positions, marked=mark),
-                # Tradable balance of the persistent account (excludes --isolated runs).
-                "account": load_account(self.store.conn).to_dict(),
+                "cash": str(state.cash),
+                "starting_cash": str(state.starting_cash),
+                "open_positions": len(open_rows),
+                "positions": marked,
+                "totals": portfolio_totals(marked, marked=mark, cash=state.cash),
+                "isolated_fills_not_in_account": total_fills - state.fills,
             },
             warnings=warnings,
             freshness=worst_freshness(book_freshness) if mark else "unknown",
             provenance_ids=provenance,
             assumptions={
-                "aggregates_independent_runs": True,
+                "scope": "persistent_account",
                 "cost_method": "average_cost",
-                "realized_pnl_excludes_fees": True,
+                "cost_basis_includes_buy_fees": True,
+                "realized_pnl_is_net_of_fees": True,
                 "unrealized_pnl_is_midpoint_based_and_excludes_exit_fees": True,
-                "net_pnl": "realized_pnl + unrealized_pnl (0 if unmarked) - fees",
+                "net_pnl": "realized_pnl + unrealized_pnl (0 if unmarked)",
                 "totals_market_value_and_unrealized_cover_marked_positions_only": True,
                 "mark": "live_book_midpoint" if mark else "none",
+                "paper_pnl_is_not_live_pnl": True,
+            },
+        )
+
+    def settle(self, market: MarketState) -> dict[str, Any]:
+        """Pay out account positions in a resolved market at 1 (winner) or 0 per share."""
+
+        payouts = resolution_payouts(market)
+        if payouts is None:
+            return envelope(
+                result={
+                    "market": {"slug": market.slug, "closed": market.closed},
+                    "outcomes": market_outcomes(market),
+                },
+                errors=(
+                    {
+                        "code": "MARKET_NOT_RESOLVED",
+                        "category": "paper_settlement",
+                        "message": "market is not closed with final 0/1 outcome prices yet",
+                    },
+                ),
+                ok=False,
+            )
+        state = load_account(self.store.conn)
+        held = {
+            token.token_id: token.outcome
+            for token in market.tokens
+            if token.token_id in state.opening_positions()
+        }
+        if not held:
+            return envelope(
+                result={"settled": [], "account": state.to_dict()},
+                warnings=("no_open_account_position_in_market",),
+                assumptions={
+                    "payouts": {
+                        token.outcome: str(payouts[token.token_id]) for token in market.tokens
+                    }
+                },
+            )
+        run_id = sha256_json(
+            {"settlement": market.condition_id, "runs": state.runs, "fills": state.fills}
+        )[:24]
+        self.store.create_run(
+            run_id=run_id,
+            dataset_id=None,
+            created_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            config=SimulationConfig(starting_cash=state.cash),
+        )
+        ledger = AppendOnlyLedger(
+            self.store,
+            run_id=run_id,
+            starting_cash=state.cash,
+            opening_positions=state.opening_positions(),
+        )
+        settled = []
+        for token_id, outcome in held.items():
+            quantity = ledger.state.positions[token_id].quantity
+            realized = ledger.resolve(
+                token_id,
+                payout_per_share=payouts[token_id],
+                assumptions={
+                    "account": ACCOUNT_ID,
+                    "market_slug": market.slug,
+                    "outcome": outcome,
+                    "source": "provider_final_outcome_prices",
+                },
+            )
+            settled.append(
+                {
+                    "outcome": outcome,
+                    "asset_id": token_id,
+                    "quantity": str(quantity),
+                    "payout_per_share": str(payouts[token_id]),
+                    "proceeds": str(quantity * payouts[token_id]),
+                    "realized_pnl": str(realized),
+                }
+            )
+        ledger.report(
+            mark_prices={},
+            assumptions={"paper_only": True, "settlement": market.slug},
+            data_coverage={"settlement": True},
+        )
+        return envelope(
+            result={
+                "run_id": run_id,
+                "market": {"slug": market.slug, "question": market.question},
+                "settled": settled,
+                "account": load_account(self.store.conn).to_dict(),
+            },
+            provenance_ids=(market.provenance.observation_id,) if market.provenance else (),
+            assumptions={
+                "payout_source": "provider_final_outcome_prices",
                 "paper_pnl_is_not_live_pnl": True,
             },
         )
@@ -546,6 +640,12 @@ class ResearchService:
             limit=min(self.limits.max_page_size, 100), filters={"slug": identifier}
         )
         if not page.items:
+            # Gamma omits closed markets unless asked; resolved markets must stay reachable.
+            page = self.gamma.list_markets(
+                limit=min(self.limits.max_page_size, 100),
+                filters={"slug": identifier, "closed": "true"},
+            )
+        if not page.items:
             raise ValueError(f"market not found: {identifier}")
         market = page.items[0]
         _record_service_command(
@@ -560,6 +660,19 @@ class ResearchService:
             envelope(result=market),
         )
         return market
+
+
+def resolution_payouts(market: MarketState) -> dict[str, Decimal] | None:
+    """Final per-share payouts if the market is closed with 0/0.5/1 prices summing to 1."""
+
+    if market.closed is not True or len(market.outcome_prices) != len(market.tokens):
+        return None
+    prices = list(market.outcome_prices)
+    if any(price not in {Decimal(0), Decimal("0.5"), Decimal(1)} for price in prices):
+        return None
+    if sum(prices, Decimal(0)) != 1:
+        return None
+    return {token.token_id: price for token, price in zip(market.tokens, prices)}
 
 
 def _order_summary(match: Any) -> dict[str, Any]:

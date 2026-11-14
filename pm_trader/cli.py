@@ -120,6 +120,12 @@ def _parser() -> argparse.ArgumentParser:
         "--mark", action="store_true", help="mark open positions to the live book midpoint"
     )
 
+    settle = sub.add_parser(
+        "settle", help="pay out account positions in a resolved market at its final prices"
+    )
+    settle.add_argument("identifier", nargs="?", help="market slug or 0x condition id")
+    settle.add_argument("--market-fixture", type=Path, help="offline market JSON instead")
+
     inspect = sub.add_parser("inspect", help="inspect market or book")
     inspect_sub = inspect.add_subparsers(dest="inspect_command", required=True)
     inspect_market = inspect_sub.add_parser("market")
@@ -479,6 +485,17 @@ def _run_parsed(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
                     max_points=args.max_points,
                 ),
             )
+        if args.command == "settle":
+            service = ResearchService(store)
+            if bool(args.identifier) == bool(args.market_fixture):
+                raise ValueError("settle needs a market identifier or --market-fixture")
+            market = (
+                load_market_fixture(args.market_fixture)
+                if args.market_fixture
+                else service._market(args.identifier)
+            )
+            payload = service.settle(market)
+            return _logged(args, 0 if payload["ok"] else 1, payload)
         if args.command == "portfolio":
             return _logged(args, 0, ResearchService(store).portfolio(mark=args.mark))
         if args.command == "simulate":

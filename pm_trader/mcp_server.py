@@ -125,6 +125,22 @@ TOOL_DEFINITIONS = [
         },
     },
     {
+        "name": "settle_market",
+        "description": (
+            "After a market resolves (closed with final 0/1 outcome prices), pay out the "
+            "paper account's positions in it: winners at 1 per share, losers at 0. Returns "
+            "MARKET_NOT_RESOLVED (ok=false) while the market is still open."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "market": _IDENT,
+                "market_fixture": {"type": "string", "description": "Offline market JSON."},
+                "data_dir": _ORDER_FIELDS["data_dir"],
+            },
+        },
+    },
+    {
         "name": "inspect_market",
         "description": "Inspect a normalized market state and its unknown fields.",
         "inputSchema": {
@@ -246,6 +262,13 @@ def dispatch_tool(
                 fidelity=None if fidelity is None else int(fidelity),
                 max_points=int(args.get("max_points", 120)),
             )
+        elif name == "settle_market":
+            market = (
+                load_market_fixture(str(args["market_fixture"]))
+                if "market_fixture" in args
+                else workflow._market(str(args["market"]))
+            )
+            payload = workflow.settle(market)
         elif name == "paper_portfolio":
             payload = workflow.portfolio(mark=bool(args.get("mark", False)))
         elif name == "inspect_market" and "fixture" not in args:
