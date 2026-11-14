@@ -57,9 +57,12 @@ TOOL_DEFINITIONS = [
     {
         "name": "quote_market",
         "description": (
-            "Live trading rules (tick, min size, fees) and a best-first order-book summary for "
-            "each outcome: best bid/ask, midpoint, spread, top levels and depth near the "
-            "midpoint. Call this before choosing a paper order price and size."
+            "Live trading rules (tick, min size, fees incl. fee formula, hours_to_end) and a "
+            "best-first order-book summary for each outcome: best bid/ask, midpoint, spread, "
+            "age_seconds/freshness, top levels and depth near the midpoint. Pass outcome + side "
+            "+ size (and optionally a limit price) to also get a pre-trade `estimate`: vwap, "
+            "worst price, fee, slippage vs midpoint and immediate mark loss. Use compact=true "
+            "for top-of-book numbers only. Call this before choosing a paper order."
         ),
         "inputSchema": {
             "type": "object",
@@ -68,6 +71,22 @@ TOOL_DEFINITIONS = [
                 "market": _IDENT,
                 "outcome": {"type": "string", "description": "Omit to quote every outcome."},
                 "depth": {"type": "integer", "description": "Levels per side, 1-50. Default 5."},
+                "side": {
+                    "type": "string",
+                    "enum": ["buy", "sell"],
+                    "description": "With outcome and size: estimate a taker fill (buy walks asks, "
+                    "sell walks bids).",
+                },
+                "size": {"type": "string", "description": "Shares to estimate. Needs side."},
+                "price": {
+                    "type": "string",
+                    "description": "Optional limit price; levels beyond it are not used.",
+                },
+                "compact": {
+                    "type": "boolean",
+                    "description": "Per book only outcome, best bid/ask, midpoint, spread, "
+                    "age_seconds and depth within 1c.",
+                },
             },
         },
     },
@@ -94,7 +113,8 @@ TOOL_DEFINITIONS = [
         "name": "paper_portfolio",
         "description": (
             "Net paper positions across every stored run: quantity, average price, cost basis, "
-            "realized P&L and fees. With mark=true, adds live midpoint value and unrealized P&L."
+            "realized P&L, fees and net_pnl, plus totals. With mark=true, adds live midpoint value "
+            "and unrealized P&L (midpoint-based, excludes exit fees)."
         ),
         "inputSchema": {
             "type": "object",
@@ -205,6 +225,10 @@ def dispatch_tool(
                 str(args["market"]),
                 outcome=args.get("outcome"),
                 depth=int(args.get("depth", 5)),
+                side=args.get("side"),
+                size=args.get("size"),
+                price=args.get("price"),
+                compact=bool(args.get("compact", False)),
             )
         elif name == "price_history":
             fidelity = args.get("fidelity")

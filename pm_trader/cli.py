@@ -89,6 +89,20 @@ def _parser() -> argparse.ArgumentParser:
     quote.add_argument("identifier", help="market slug or 0x condition id")
     quote.add_argument("--outcome", help="quote one outcome (default: every outcome)")
     quote.add_argument("--depth", type=int, default=5, help="book levels per side (1-50)")
+    quote.add_argument(
+        "--side",
+        choices=("buy", "sell"),
+        help="with --size and --outcome: estimate a taker fill against the live book",
+    )
+    quote.add_argument("--size", type=Decimal, help="shares to estimate (needs --side)")
+    quote.add_argument(
+        "--price", type=Decimal, help="limit price for the estimate (worse levels are skipped)"
+    )
+    quote.add_argument(
+        "--compact",
+        action="store_true",
+        help="per book: best bid/ask, midpoint, spread, age, depth within 1c only",
+    )
 
     prices = sub.add_parser("prices", help="live price history and summary for one outcome")
     prices.add_argument("identifier", help="market slug or 0x condition id")
@@ -439,7 +453,13 @@ def _run_parsed(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
                 args,
                 0,
                 ResearchService(store).quote(
-                    args.identifier, outcome=args.outcome, depth=args.depth
+                    args.identifier,
+                    outcome=args.outcome,
+                    depth=args.depth,
+                    side=args.side,
+                    size=args.size,
+                    price=args.price,
+                    compact=args.compact,
                 ),
             )
         if args.command == "prices":

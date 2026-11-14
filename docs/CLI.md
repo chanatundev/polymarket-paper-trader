@@ -156,6 +156,12 @@ Gamma reports them, `stats`: `volume_24hr`, `volume_1wk`, `volume`,
 `one_day_price_change`, and `one_week_price_change`. These are indicative, not
 executable; use `quote` for the live book.
 
+Rows also carry `hours_to_end` (hours from now to `end_time`, one decimal string,
+negative once passed, `null` if unknown) and `ends_within_24h` (true only when
+the end is 0-24h away; false when unknown or already past). A date-only
+`end_time` such as `2026-11-14` is assumed to end at the end of that day in UTC
+(the envelope's `date_only_end_time_is_end_of_day_utc` assumption records this).
+
 ### Search public markets
 
 Pass `--query` to use public search instead of keyset pagination:
@@ -200,6 +206,9 @@ decision-ready numbers. Use them between discovery and simulation.
 ```bash
 uv run python -m pm_trader quote xi-jinping-out-before-2027
 uv run python -m pm_trader quote xi-jinping-out-before-2027 --outcome Yes --depth 10
+uv run python -m pm_trader quote xi-jinping-out-before-2027 --outcome Yes --side buy --size 50
+uv run python -m pm_trader quote xi-jinping-out-before-2027 --outcome Yes --side sell --size 50 --price 0.40
+uv run python -m pm_trader quote xi-jinping-out-before-2027 --compact
 ```
 
 The result has the market's trading rules (`tick_size`, `min_order_size`,
@@ -207,7 +216,40 @@ The result has the market's trading rules (`tick_size`, `min_order_size`,
 book summary per outcome (or only `--outcome`): `best_bid`, `best_ask`,
 `midpoint`, `spread`, level counts, best-first `bids`/`asks` up to `--depth`
 (1-50, default 5), and `depth_near_mid` (shares and notional within 1c and 5c of
-the midpoint). Book timestamps are ISO-8601 UTC.
+the midpoint). Book timestamps are ISO-8601 UTC. The market block also has
+`hours_to_end` and `ends_within_24h` (see Discover).
+
+**Book age and freshness.** Each book has `age_seconds` (`received_at` minus
+`provider_timestamp`; the provider timestamp may be unix milliseconds) and a
+`freshness` of `fresh` (age <= 30s), `stale`, or `unknown` (age not computable).
+The envelope `freshness` is the worst of the books (`unknown` > `stale` >
+`fresh`). This is display only; the simulator's own freshness gate is separate.
+
+**Fees.** `fee_schedule.formula` states how fees are computed, mirroring
+`pm_trader/fees.py`: `fee = shares * rate * (price * (1 - price)) ** exponent`,
+charged per fill level at that level's price, taker only (makers pay 0),
+rounded to 5 decimals. (Legacy base-fee schedules use
+`shares * rate * price * (1 - price)`.) With `fees_enabled: false` the fee is 0.
+
+**Pre-trade estimate.** `--side buy|sell --size N [--price LIMIT]` with
+`--outcome` adds `result.estimate`, a taker walk of that outcome's live book:
+buys consume asks and sells consume bids, best price first, stopping at the
+limit price if given. Nothing is simulated or stored. Fields: `side`,
+`requested_size`, `limit_price`, `fillable_size`, `fully_fillable`, `vwap`,
+`worst_price`, `levels_used`, `notional`, `estimated_fee` (summed per level
+exactly as the matcher charges it; `null` if the fee schedule is unknown, `"0"`
+if fees are disabled), `slippage_vs_mid` (`vwap - mid` for buys, `mid - vwap`
+for sells), `immediate_mark_loss` (`fillable_size * |vwap - mid| +
+estimated_fee`, the loss against the midpoint the instant you fill), `midpoint`,
+and `warnings`: `below_min_order_size`, `price_not_on_tick`, `partial_fill`,
+`no_fill`, `fees_disabled`, `fee_schedule_unknown`,
+`immediate_mark_loss_excludes_fee`, `midpoint_unavailable`. `--side` and
+`--size` must be given together, and an estimate requires `--outcome`.
+
+**Compact.** `--compact` keeps per book only `outcome`, `best_bid`, `best_ask`,
+`midpoint`, `spread`, `age_seconds`, and `depth_near_mid.within_1c`; level lists
+are dropped. The market block, envelope freshness, and any `estimate` are
+unchanged.
 
 ### Price history
 
@@ -236,10 +278,20 @@ book for up to 25 open positions and adds `mark_price` (midpoint),
 run with its own starting cash; the portfolio is a read-only roll-up across
 them.
 
+Each position also has `net_pnl` = `realized_pnl` + `unrealized_pnl` (counted
+as 0 if unmarked) - `fees`, and the result has a `totals` object: `cost_basis`,
+`market_value` (marked positions only, `null` without `--mark`), `realized_pnl`,
+`unrealized_pnl` (same), `fees`, and `net_pnl`. Unrealized P&L is
+midpoint-based and excludes the fees you would pay to exit, so it overstates
+what closing would realize. With `--mark`, each marked book has an age and the
+envelope `freshness` is the worst of them (same rule as `quote`); positions that
+could not be marked add an `unmarked_open_positions:N` warning.
+
 ### MCP tools
 
 The MCP server exposes the same data as `quote_market`, `price_history`, and
-`paper_portfolio`. `discover_markets` accepts `order`, `ascending`, and
+`paper_portfolio`. `quote_market` also accepts `side`, `size`, `price` (the
+estimate; `outcome` required) and `compact`. `discover_markets` accepts `order`, `ascending`, and
 `open_only`; `inspect_market`, `inspect_book`, and `simulate` accept a live
 `market` (slug or condition id) in place of fixture paths.
 

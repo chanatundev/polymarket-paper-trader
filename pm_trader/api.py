@@ -53,7 +53,7 @@ class ResourceLimits:
     max_recorded_bytes: int = 50 * 1024 * 1024
     max_recorded_observations: int = 100_000
     max_replay_events: int = 100_000
-    max_response_bytes: int = 64 * 1024
+    max_response_bytes: int = 80 * 1024
     max_search_results: int = 50
 
 
