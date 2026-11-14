@@ -92,6 +92,7 @@ def scan_market(market: MarketState, *, now: datetime | None = None) -> dict[str
 
 
 _END_TIME_ASSUMPTION = {"date_only_end_time_is_end_of_day_utc": True}
+_LISTING_FRESHNESS = {"listing_freshness": "provider_has_no_timestamp; see retrieved_at"}
 
 
 def _decimal_arg(name: str, value: Any) -> Decimal:
@@ -163,12 +164,14 @@ class ResearchService:
                     "tags": found.tags,
                     "profiles": found.profiles,
                     "pagination": found.pagination,
+                    "retrieved_at": found.observation.provenance.retrieved_at,
                 },
                 warnings=(),
                 provenance_ids=(found.observation.provenance.observation_id,),
                 assumptions={
                     "provider": "gamma",
                     "route": "/public-search",
+                    **_LISTING_FRESHNESS,
                     **_END_TIME_ASSUMPTION,
                 },
             )
@@ -192,12 +195,14 @@ class ResearchService:
                     "next_cursor": page.next_cursor,
                     "query": page.query,
                     "response_metadata": page.response_metadata,
+                    "retrieved_at": page.observation.provenance.retrieved_at,
                 },
                 provenance_ids=(page.observation.provenance.observation_id,),
                 assumptions={
                     "provider": "gamma",
                     "route": "/markets/keyset",
                     "pagination": "keyset",
+                    **_LISTING_FRESHNESS,
                     **_END_TIME_ASSUMPTION,
                 },
             )

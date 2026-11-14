@@ -183,3 +183,46 @@ def test_market_lookup_falls_back_to_closed_markets(tmp_path: Path):
     assert [params.get("closed") for _, params in transport.requests] == [None, "true"]
     settled = service.settle(market)
     assert settled["assumptions"]["payouts"] == {"Yes": "1", "No": "0"}
+
+
+def test_account_report_states_coverage_instead_of_warning_for_untouched_positions(tmp_path: Path):
+    import json
+
+    raw = json.loads(Path(MARKET).read_text(encoding="utf-8"))
+    other = json.loads(json.dumps(raw))
+    market = other["markets"][0]
+    market["slug"] = "other-market"
+    market["conditionId"] = "0xother-001"
+    market["clobTokenIds"] = ["111", "222"]
+    other_path = tmp_path / "other.json"
+    other_path.write_text(json.dumps(other), encoding="utf-8")
+    book = json.loads(Path(BOOK).read_text(encoding="utf-8"))
+    book["asset_id"] = "111"
+    book["market"] = "0xother-001"
+    book_path = tmp_path / "other-book.json"
+    book_path.write_text(json.dumps(book), encoding="utf-8")
+
+    data = tmp_path / "db"
+    simulate(data, "--order-id", "b1", "--price", "0.67", "--size", "40", "--tif", "fak")
+    code, second = run(
+        ["--data-dir", str(data), "simulate", "--market-fixture", str(other_path),
+         "--book-fixture", str(book_path), "--order-id", "b2", "--price", "0.67", "--size", "10", "--tif", "fak"]
+    )
+    assert code == 0, second["errors"]
+    report = second["result"]["report"]
+    assert not [w for w in report["warnings"] if w.startswith("unrealized_pnl_unknown")]
+    coverage = report["data_coverage"]
+    assert coverage["unrealized_pnl_covers"] == "marked_positions_only"
+    assert len(coverage["unmarked_carried_positions"]) == 1
+    assert coverage["full_account_view"] == "portfolio --mark"
+    assert report["uncertainty"]["unrealized_pnl"] == "marked_positions_only"
+
+    # Trading the first position again marks it; only the other one stays unmarked.
+    _, third = simulate(data, "--order-id", "b3", "--price", "0.67", "--size", "5", "--tif", "fak")
+    assert third["result"]["report"]["data_coverage"]["unmarked_carried_positions"] == ["111"]
+    assert not [w for w in third["result"]["report"]["warnings"] if w.startswith("unrealized_pnl_unknown")]
+
+
+def test_isolated_report_has_no_coverage_fields(tmp_path: Path):
+    _, payload = simulate(tmp_path, "--isolated", "--order-id", "i1", "--price", "0.67", "--size", "5", "--tif", "fak")
+    assert "unmarked_carried_positions" not in payload["result"]["report"]["data_coverage"]

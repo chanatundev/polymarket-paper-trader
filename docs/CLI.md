@@ -170,6 +170,11 @@ Gamma reports them, `stats`: `volume_24hr`, `volume_1wk`, `volume`,
 `one_day_price_change`, and `one_week_price_change`. These are indicative, not
 executable; use `quote` for the live book.
 
+Gamma listings carry no provider timestamp, so the envelope `freshness` stays
+`unknown`. Live `discover` results add `result.retrieved_at` (ISO-8601 UTC, when
+we fetched the listing) and an assumption `listing_freshness:
+"provider_has_no_timestamp; see retrieved_at"`. Fixture runs omit both.
+
 Rows also carry `hours_to_end` (hours from now to `end_time`, one decimal string,
 negative once passed, `null` if unknown). `quote` also adds `ends_within_24h`
 (true only when the end is 0-24h away; false when unknown or already past). A date-only
@@ -395,6 +400,15 @@ Every simulate result has:
 - `account` (account mode): `cash`, `open_positions` (the same labelled rows as
   `portfolio`), `realized_pnl`, `fees`, `fills`, and `runs` (account runs that
   filled or settled something; rejected orders don't count).
+
+In account mode the report's unrealized P&L covers only positions this run
+marked (the traded book's midpoint). Carried positions this run did not trade
+are not fetched and do not add a missing-mark warning; instead
+`report.data_coverage` has `unrealized_pnl_covers: "marked_positions_only"`,
+`unmarked_carried_positions` (token ids), and `full_account_view: "portfolio
+--mark"`, and `report.uncertainty.unrealized_pnl` is `marked_positions_only`.
+Use `portfolio --mark` for the whole account. Positions the run traded but could
+not mark still warn `unrealized_pnl_unknown_without_mark_price`.
 
 A rejected order returns `ok: false`, exit status `1`, and an `errors` entry
 with the reason code (for example `TICK_SIZE_VIOLATION`,

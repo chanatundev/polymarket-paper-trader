@@ -399,3 +399,12 @@ def test_portfolio_totals_and_mark_freshness_end_to_end(tmp_path: Path):
         assert Decimal(position["unrealized_pnl"]) == Decimal("6.4") - cost
         assert Decimal(marked["result"]["totals"]["unrealized_pnl"]) == Decimal("6.4") - cost
         assert marked["result"]["totals"]["market_value"] == "6.4"
+
+
+def test_discover_reports_retrieval_time_and_listing_freshness(tmp_path: Path):
+    service, _ = offline_service(tmp_path)
+    payload = service.discover(limit=1)
+    assert payload["freshness"] == "unknown"
+    assert payload["result"]["retrieved_at"].endswith("Z")
+    assert payload["assumptions"]["listing_freshness"] == "provider_has_no_timestamp; see retrieved_at"
+    assert "retrieved_at" not in payload["result"]["markets"][0]

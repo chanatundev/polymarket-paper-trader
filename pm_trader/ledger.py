@@ -54,6 +54,8 @@ class AppendOnlyLedger:
         self.store = store
         self.state = LedgerState(run_id=run_id, starting_cash=starting_cash, cash=ZERO)
         self._sequence = 0
+        self._account_mode = opening_positions is not None
+        self._carried: set[str] = set()
         self._append(
             kind=LedgerKind.INITIAL_CASH.value,
             asset_id=None,
@@ -76,6 +78,7 @@ class AppendOnlyLedger:
             if quantity <= ZERO:
                 continue
             self.state.positions[asset_id] = PositionState(quantity=quantity, cost_basis=cost_basis)
+            self._carried.add(asset_id)
             self._append(
                 kind=LedgerKind.OPENING_POSITION.value,
                 asset_id=asset_id,
@@ -280,6 +283,21 @@ class AppendOnlyLedger:
             exposure += value
             unrealized += value - position.cost_basis
         report_warnings = list(warnings or [])
+        coverage = dict(data_coverage or {})
+        unmarked_carried: list[str] = []
+        if self._account_mode:
+            # Carried positions this run never traded are outside this run's marks.
+            traded = {fill.asset_id for fill in self.state.fills}
+            unmarked_carried = [
+                asset_id
+                for asset_id in missing_marks
+                if asset_id in self._carried and asset_id not in traded
+            ]
+            missing_marks = [a for a in missing_marks if a not in unmarked_carried]
+        if unmarked_carried:
+            coverage["unrealized_pnl_covers"] = "marked_positions_only"
+            coverage["unmarked_carried_positions"] = unmarked_carried
+            coverage["full_account_view"] = "portfolio --mark"
         if missing_marks:
             report_warnings.append(
                 "unrealized_pnl_unknown_without_mark_price:" + ",".join(missing_marks)
@@ -291,6 +309,8 @@ class AppendOnlyLedger:
             "unrealized_pnl": (
                 "unknown_without_mark"
                 if missing_marks
+                else "marked_positions_only"
+                if unmarked_carried
                 else "derived_from_declared_marks"
                 if positions
                 else "not_applicable"
@@ -310,7 +330,7 @@ class AppendOnlyLedger:
             "orders": len(self.state.orders),
             "warnings": report_warnings,
             "assumptions": {"paper_only": True, **dict(assumptions or {})},
-            "data_coverage": dict(data_coverage or {}),
+            "data_coverage": coverage,
             "uncertainty": uncertainty,
         }
         checksum = sha256_json(report_payload)
@@ -328,7 +348,7 @@ class AppendOnlyLedger:
             orders=len(self.state.orders),
             warnings=tuple(report_warnings),
             assumptions={"paper_only": True, **dict(assumptions or {})},
-            data_coverage=dict(data_coverage or {}),
+            data_coverage=coverage,
             checksum=checksum,
             uncertainty=uncertainty,
         )
