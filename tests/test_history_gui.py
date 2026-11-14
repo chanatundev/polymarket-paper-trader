@@ -165,6 +165,17 @@ def test_reader_filters_and_paginates_bounded_results(seeded_store):
     reader.close()
 
 
+def test_decode_cursor_rejects_corrupted_valid_cursors():
+    from pm_trader.history import decode_cursor, encode_cursor
+
+    assert decode_cursor(encode_cursor(1)) == 1
+    valid = encode_cursor(20)
+    corrupted = valid[:1] + "!" + valid[2:]
+    for bad in [corrupted, "!MQ", "M!Q", "MQ=", "MQ==", "M", "MR", "MQ "]:
+        with pytest.raises(ValueError, match="cursor"):
+            decode_cursor(bad)
+
+
 def test_reader_is_sqlite_read_only_and_missing_store_does_not_get_created(
     tmp_path: Path, market, book
 ):
@@ -179,8 +190,9 @@ def test_reader_is_sqlite_read_only_and_missing_store_does_not_get_created(
     reader.list_history()
     reader.close()
     assert database_path.read_bytes() == before
-    assert not Path(str(database_path) + "-shm").exists()
-    assert not Path(str(database_path) + "-wal").exists()
+    # A WAL store may get SQLite's -wal/-shm coordination files on read. Reading the
+    # committed WAL rows requires them, so the contract is that the database bytes
+    # never change (asserted above), not that no sidecar file appears.
 
     missing_dir = tmp_path / "missing-data"
     missing_reader = TradeHistoryReader.open(missing_dir)

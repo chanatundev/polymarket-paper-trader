@@ -87,10 +87,12 @@ uv run python -m pm_trader --data-dir .pm-trader-demo gui --port 8765 --open
 ```
 
 The global `--data-dir` may name a directory (the GUI reads `paper.db` inside
-it) or a `.db`, `.sqlite`, or `.sqlite3` file. The GUI opens SQLite in immutable
-read-only mode; a missing store is reported in the page and does not create a
-directory or database. It makes no Gamma, CLOB, Data API, WebSocket, or RTDS
-requests and has no order, credential, wallet, or fund controls.
+it) or a `.db`, `.sqlite`, or `.sqlite3` file. The GUI opens SQLite in
+read-only, query-only mode. If the store uses WAL mode, SQLite may use or create
+WAL coordination sidecars while reading committed rows; the paper database is
+not modified. A missing store is reported in the page and does not create a
+directory or database. The GUI makes no Gamma, CLOB, Data API, WebSocket, or
+RTDS requests and has no order, credential, wallet, or fund controls.
 
 The list is bounded to 25 rows by default and 100 rows at most per request. It
 is newest-first and can be filtered in the page by search text, side, status,

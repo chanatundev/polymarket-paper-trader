@@ -49,4 +49,7 @@ uv run python -m examples.discovery_to_replay
 uv run --extra dev pytest
 ```
 
+The dashboard pagination tests execute the production JavaScript reducer and require
+Node.js (`node`) on `PATH`; the test suite fails clearly if it is not installed.
+
 Live reads are intentionally not part of the local test suite. A release still requires a bounded read-only provider probe and human review of the paper-only boundary, as recorded in `IMPLEMENTATION.md`.

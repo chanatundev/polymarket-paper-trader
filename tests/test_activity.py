@@ -191,12 +191,14 @@ def test_simulate_appends_order_lines_the_dashboard_can_render(tmp_path: Path):
     assert "example" in order["market"]
     snapshot = build_snapshot(data_dir)
     assert snapshot["state"] == "ready"
-    assert snapshot["rows"][0]["kind"] == "cash"
+    assert snapshot["activity"][0]["kind"] == "cash"
     html = render_dashboard_html(snapshot)
-    assert 'http-equiv="refresh"' in html
+    assert 'http-equiv="refresh"' not in html
+    assert 'src="/live.js"' in html
+    assert "Recent trades" in html
     assert "(model)" in html
-    assert "Activity" in html
-    assert snapshot["cash"]
+    assert "Technical activity log" in html
+    assert snapshot["report"]["report"]["cash"]
 
 
 def test_library_search_market_book_and_report_lookups_are_logged(tmp_path: Path):

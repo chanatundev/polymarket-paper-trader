@@ -5,9 +5,11 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+import re
 import sqlite3
 from collections.abc import Mapping
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from threading import RLock
 from typing import Any
@@ -21,6 +23,8 @@ DEFAULT_HISTORY_LIMIT = 25
 MAX_FILTER_LENGTH = 200
 MAX_DISPLAY_TEXT = 512
 DEFAULT_MAX_SCAN_ROWS = 100_000
+MAX_DASHBOARD_CASH_ENTRIES = 5_000
+MAX_DASHBOARD_CHART_POINTS = 160
 
 
 class HistoryStoreUnavailable(RuntimeError):
@@ -182,7 +186,7 @@ class TradeHistoryReader:
         try:
             encoded_path = quote(str(database_path.resolve()), safe="/:\\")
             connection = sqlite3.connect(
-                f"file:{encoded_path}?mode=ro&immutable=1",
+                f"file:{encoded_path}?mode=ro",
                 uri=True,
                 check_same_thread=False,
             )
@@ -277,6 +281,106 @@ class TradeHistoryReader:
             if history_id.startswith("canonical:"):
                 return self._get_canonical_detail(history_id)
             return None
+
+    def latest_report(self) -> dict[str, Any] | None:
+        """Return the latest completed run's stored report without exposing other rows."""
+
+        with self._lock:
+            if not self._table_exists("reports") or not self._table_exists("simulation_runs"):
+                return None
+            row = self._require_available().execute(
+                """
+                SELECT s.run_id, s.created_at, s.status, p.payload
+                FROM simulation_runs AS s
+                JOIN reports AS p ON p.run_id = s.run_id
+                WHERE s.status = 'completed'
+                ORDER BY s.created_at DESC, s.run_id DESC
+                LIMIT 1
+                """
+            ).fetchone()
+            if row is None:
+                return None
+            run_id = str(row["run_id"])
+            report = _safe_json_object(row["payload"], "simulation report")
+            return {
+                "run_id": run_id,
+                "created_at": row["created_at"],
+                "status": row["status"],
+                "report": report,
+                "position_labels": self._position_labels(run_id),
+                "cash_history": self._cash_history(run_id, report.get("starting_cash")),
+            }
+
+    def _position_labels(self, run_id: str) -> dict[str, dict[str, str]]:
+        if not self._table_exists("orders"):
+            return {}
+        rows = self._require_available().execute(
+            "SELECT payload FROM orders WHERE run_id = ? ORDER BY rowid LIMIT ?",
+            (run_id, self.max_scan_rows),
+        ).fetchall()
+        labels: dict[str, dict[str, str]] = {}
+        for row in rows:
+            try:
+                order = _safe_json_object(row["payload"], "paper order")
+            except HistoryRecordMalformed:
+                continue
+            metadata = _mapping(order.get("metadata"))
+            asset_id = _first(order, metadata, "asset_id", "assetId")
+            if not isinstance(asset_id, str):
+                continue
+            label = {
+                key: value
+                for key, value in {
+                    "question": _first(metadata, order, "market_question", "question"),
+                    "slug": _first(metadata, order, "market_slug", "slug"),
+                    "outcome": _first(metadata, order, "outcome"),
+                }.items()
+                if isinstance(value, str) and value
+            }
+            if label:
+                labels[asset_id] = label
+        return labels
+
+    def _cash_history(self, run_id: str, starting_cash: Any) -> dict[str, Any]:
+        if not self._table_exists("ledger_entries"):
+            return {"points": [], "too_many": False}
+        entry_limit = min(self.max_scan_rows, MAX_DASHBOARD_CASH_ENTRIES)
+        limit = entry_limit + 1
+        rows = self._require_available().execute(
+            """
+            SELECT sequence, payload
+            FROM ledger_entries
+            WHERE run_id = ?
+            ORDER BY sequence
+            LIMIT ?
+            """,
+            (run_id, limit),
+        ).fetchall()
+        if len(rows) > entry_limit:
+            return {"points": [], "too_many": True}
+        cash = Decimal(0)
+        points: list[dict[str, Any]] = []
+        for row in rows:
+            try:
+                entry = _safe_json_object(row["payload"], "ledger entry")
+            except HistoryRecordMalformed:
+                return {"points": [], "too_many": False}
+            try:
+                delta = Decimal(str(entry.get("cash_delta", "0")))
+            except InvalidOperation:
+                return {"points": [], "too_many": False}
+            cash += delta
+            if delta or not points:
+                points.append({"step": row["sequence"], "cash": str(cash)})
+        if not points and starting_cash is not None:
+            points.append({"step": 0, "cash": str(starting_cash)})
+        if len(points) > MAX_DASHBOARD_CHART_POINTS:
+            last_index = len(points) - 1
+            points = [
+                points[round(index * last_index / (MAX_DASHBOARD_CHART_POINTS - 1))]
+                for index in range(MAX_DASHBOARD_CHART_POINTS)
+            ]
+        return {"points": points, "too_many": False}
 
     def _require_available(self) -> sqlite3.Connection:
         if not self.available or self.connection is None:
@@ -469,19 +573,28 @@ def encode_cursor(offset: int) -> str:
     return base64.urlsafe_b64encode(str(offset).encode("ascii")).decode("ascii").rstrip("=")
 
 
+_CURSOR_ALPHABET = re.compile(r"[A-Za-z0-9_-]+")
+
+
 def decode_cursor(cursor: str | None) -> int:
     if not cursor:
         return 0
     if len(cursor) > 32:
         raise ValueError("history cursor is too long")
+    # Strict: only the unpadded URL-safe alphabet, and only the exact string that
+    # encode_cursor would produce. Lenient base64 would accept corrupted cursors.
+    if not _CURSOR_ALPHABET.fullmatch(cursor) or len(cursor) % 4 == 1:
+        raise ValueError("history cursor is invalid")
     try:
         padded = cursor + "=" * (-len(cursor) % 4)
-        decoded = base64.b64decode(padded.encode("ascii"), altchars=b"-_").decode("ascii")
+        decoded = base64.urlsafe_b64decode(padded.encode("ascii")).decode("ascii")
         offset = int(decoded)
     except (ValueError, UnicodeDecodeError, binascii.Error) as exc:
         raise ValueError("history cursor is invalid") from exc
     if offset < 0:
         raise ValueError("history cursor cannot be negative")
+    if encode_cursor(offset) != cursor:
+        raise ValueError("history cursor is invalid")
     return offset
 
 
