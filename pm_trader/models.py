@@ -71,6 +71,7 @@ class MakerTaker(str, Enum):
 
 class LedgerKind(str, Enum):
     INITIAL_CASH = "initial_cash"
+    OPENING_POSITION = "opening_position"
     ORDER = "order"
     FILL = "fill"
     FEE = "fee"

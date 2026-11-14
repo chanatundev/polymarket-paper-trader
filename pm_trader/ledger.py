@@ -43,7 +43,14 @@ class LedgerState:
 class AppendOnlyLedger:
     """Ledger whose financial changes are represented only by immutable entries."""
 
-    def __init__(self, store: SQLiteStore, *, run_id: str, starting_cash: Decimal) -> None:
+    def __init__(
+        self,
+        store: SQLiteStore,
+        *,
+        run_id: str,
+        starting_cash: Decimal,
+        opening_positions: Mapping[str, Any] | None = None,
+    ) -> None:
         self.store = store
         self.state = LedgerState(run_id=run_id, starting_cash=starting_cash, cash=ZERO)
         self._sequence = 0
@@ -62,6 +69,28 @@ class AppendOnlyLedger:
             observation_id=None,
             assumptions={"paper_only": True},
         )
+        # Positions carried in from earlier account runs; no cash moves.
+        for asset_id, opening in sorted((opening_positions or {}).items()):
+            quantity = decimal(opening.quantity, field="opening.quantity")
+            cost_basis = decimal(opening.cost_basis, field="opening.cost_basis")
+            if quantity <= ZERO:
+                continue
+            self.state.positions[asset_id] = PositionState(quantity=quantity, cost_basis=cost_basis)
+            self._append(
+                kind=LedgerKind.OPENING_POSITION.value,
+                asset_id=asset_id,
+                order_id=None,
+                fill_id=None,
+                cash_delta=ZERO,
+                position_delta=quantity,
+                notional=ZERO,
+                fee=None,
+                rebate_estimate=None,
+                realized_pnl=None,
+                unrealized_pnl=None,
+                observation_id=None,
+                assumptions={"paper_only": True, "cost_basis": str(cost_basis)},
+            )
 
     def record_order(self, order: PaperOrder) -> None:
         if not any(existing.order_id == order.order_id for existing in self.state.orders):

@@ -232,9 +232,9 @@ Aggregates every stored paper fill in the data directory into net positions
 per outcome token: `quantity`, `average_price`, `cost_basis`, `realized_pnl`
 (average cost, fees excluded), `fees`, and `fills`. `--mark` reads the live
 book for up to 25 open positions and adds `mark_price` (midpoint),
-`market_value`, and `unrealized_pnl`. Each simulation is still an independent
-run with its own starting cash; the portfolio is a read-only roll-up across
-them.
+`market_value`, and `unrealized_pnl`. The portfolio is a read-only roll-up of
+every stored fill, including `--isolated` runs; the `account` returned by
+`simulate` is the tradable balance.
 
 ### MCP tools
 
@@ -275,7 +275,44 @@ uv run python -m pm_trader --data-dir .pm-trader simulate \
   --side buy --price 0.02 --size 100 --tif fak --order-id live-1
 ```
 
-Or pass both fixture options for an offline, reproducible run:
+### The paper account
+
+By default every `simulate` trades one persistent paper account per data
+directory. A run opens with the cash and positions left by earlier account runs,
+so you can sell what you bought before:
+
+```bash
+uv run python -m pm_trader simulate --market <slug> --outcome No --side buy  --price 0.99 --size 20 --tif fak --order-id b1
+uv run python -m pm_trader simulate --market <slug> --outcome No --side sell --price 0.97 --size 10 --tif fak --order-id s1
+```
+
+The first account run deposits `--starting-cash` (default 10000); later runs
+recompute the balance from that deposit plus every account fill and fee. Pass
+the same `--starting-cash` each time or leave it at the default. Each run's
+`report.starting_cash` and `report.cash` are the account balance before and
+after that run, and positions held from earlier runs appear as
+`opening_position` ledger entries (no cash moves). `--isolated` runs a one-off
+simulation from `--starting-cash` with no positions and leaves the account
+untouched. `replay` is always isolated.
+
+Every simulate result has:
+
+- `summary`: one row per order with `outcome` (`filled`, `partially_filled`,
+  `resting`, or `rejected`), `reason_code`, `reasons`, `filled_quantity`,
+  `remaining_quantity`, `average_price`, `notional`, and `fees`.
+- `account` (account mode): `cash`, `open_positions` (quantity and fee-inclusive
+  cost basis per token), `realized_pnl` (net of sell fees), `fees`, `fills`, and
+  `runs`.
+
+A rejected order returns `ok: false`, exit status `1`, and an `errors` entry
+with the reason code (for example `TICK_SIZE_VIOLATION`,
+`INSUFFICIENT_POSITION`, `INSUFFICIENT_CASH`) and `order_id`. An
+`INSUFFICIENT_POSITION` decision lists the required and available quantity in
+`decision.checks`.
+
+### Offline runs
+
+Pass both fixture options for an offline, reproducible run:
 
 ```bash
 uv run python -m pm_trader --data-dir .pm-trader-demo simulate \
@@ -310,9 +347,10 @@ Available simulation options:
 | `--size` | `10` | Decimal order quantity. |
 | `--tif` | `fok` | `gtc`, `gtd`, `fak`, or `fok`. |
 | `--post-only` | off | Reject if the paper order would immediately take liquidity. |
-| `--starting-cash` | `10000` | Paper cash available for settlement. |
+| `--starting-cash` | `10000` | Account opening deposit, or the cash for an `--isolated` run. |
 | `--latency-ms` | `0` | Declared paper latency before matching. |
 | `--dataset-id` | unset | Optional dataset label included in run identity and coverage. |
+| `--isolated` | off | Run outside the persistent account: fresh `--starting-cash`, no positions. |
 
 Matching is fail-closed. Closed or inactive markets, stale or inconsistent books,
 identity mismatches, invalid tick/size values, missing fee schedules, insufficient
@@ -408,7 +446,7 @@ For valid invocations, exit status has this meaning:
 | Exit status | Meaning |
 | --- | --- |
 | `0` | The workflow completed with `ok: true`. Warnings can still be present. |
-| `1` | The envelope is `ok: false`, including a missing report or a response that cannot fit the size cap. |
+| `1` | The envelope is `ok: false`, including a rejected paper order, a missing report, or a response that cannot fit the size cap. |
 | `2` | Provider, network, malformed-payload, or local-validation failure. |
 
 `--help` uses standard `argparse` text output. Execution responses remain JSON and

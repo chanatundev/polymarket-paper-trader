@@ -129,6 +129,11 @@ def _parser() -> argparse.ArgumentParser:
     simulate.add_argument("--starting-cash", type=Decimal, default=Decimal(10000))
     simulate.add_argument("--latency-ms", type=int, default=0)
     simulate.add_argument("--dataset-id")
+    simulate.add_argument(
+        "--isolated",
+        action="store_true",
+        help="one-off run from --starting-cash with no positions, outside the data-dir account",
+    )
 
     replay = sub.add_parser("replay", help="replay a bounded recorded JSONL dataset")
     replay.add_argument("--dataset", type=Path, required=True)
@@ -473,17 +478,15 @@ def _run_parsed(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
             args._activity_market = market.question or market.slug
             order = _order(args, market)
             config = SimulationConfig(starting_cash=args.starting_cash, latency_ms=args.latency_ms)
-            return _logged(
-                args,
-                0,
-                service.simulate(
-                    market=market,
-                    book=book,
-                    orders=(order,),
-                    config=config,
-                    dataset_id=args.dataset_id,
-                ),
+            payload = service.simulate(
+                market=market,
+                book=book,
+                orders=(order,),
+                config=config,
+                dataset_id=args.dataset_id,
+                account=not args.isolated,
             )
+            return _logged(args, 0 if payload["ok"] else 1, payload)
         if args.command == "replay":
             market = load_market_fixture(args.market_fixture)
             args._activity_market = market.question or market.slug

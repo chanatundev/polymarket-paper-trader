@@ -12,6 +12,7 @@ from typing import Any
 
 from .activity import append_activity, cli_is_logging, record_command, record_simulation
 from .api import CLOBAdapter, FixtureTransport, GammaAdapter, ResourceLimits
+from .account import ACCOUNT_ID, load_account
 from .errors import LocalValidationError
 from .market_data import (
     aggregate_positions,
@@ -328,17 +329,43 @@ class ResearchService:
         orders: Iterable[PaperOrder],
         config: SimulationConfig | None = None,
         dataset_id: str | None = None,
+        account: bool = False,
     ) -> dict[str, Any]:
+        """Paper-match orders. With ``account``, start from and update the data-dir account."""
+
+        config = config or SimulationConfig()
         display_orders = tuple(_with_market_display(order, market) for order in orders)
+        opening = None
+        if account:
+            state = load_account(self.store.conn, starting_cash=config.starting_cash)
+            opening = state.opening_positions()
+            config = replace(config, starting_cash=state.cash)
+            display_orders = tuple(
+                replace(order, metadata={**dict(order.metadata), "account": ACCOUNT_ID})
+                for order in display_orders
+            )
         simulation = SimulationEngine(self.store).run(
-            market=market, book=book, orders=display_orders, config=config, dataset_id=dataset_id
+            market=market,
+            book=book,
+            orders=display_orders,
+            config=config,
+            dataset_id=dataset_id,
+            opening_positions=opening,
         )
         _record(self, "simulate", market, simulation)
         warnings = list(simulation.report.warnings)
         for match in simulation.matches:
             warnings.extend(match.decision.warnings)
+        result = as_jsonable(simulation)
+        result["summary"] = [_order_summary(match) for match in simulation.matches]
+        if account:
+            result["account"] = load_account(
+                self.store.conn, starting_cash=state.starting_cash
+            ).to_dict()
+        # A paper order that neither filled nor rests on the book did not happen: say so.
+        failed = [item for item in result["summary"] if item["outcome"] == "rejected"]
         return envelope(
-            result=simulation,
+            result=result,
             warnings=warnings,
             freshness=simulation.matches[0].decision.freshness.value
             if simulation.matches
@@ -348,7 +375,20 @@ class ResearchService:
                 for match in simulation.matches
                 for identifier in match.decision.provenance_ids
             ],
-            assumptions=simulation.report.assumptions,
+            assumptions={
+                **dict(simulation.report.assumptions),
+                "mode": "account" if account else "isolated_run",
+            },
+            errors=[
+                {
+                    "code": item["reason_code"] or "ORDER_REJECTED",
+                    "category": "paper_order_rejected",
+                    "message": "; ".join(item["reasons"]) or item["reason_code"],
+                    "order_id": item["order_id"],
+                }
+                for item in failed
+            ],
+            ok=not failed,
         )
 
     def replay(
@@ -439,6 +479,32 @@ class ResearchService:
             envelope(result=market),
         )
         return market
+
+
+def _order_summary(match: Any) -> dict[str, Any]:
+    """One flat line per order: did it fill, rest, or get rejected, and at what cost."""
+
+    filled = sum((fill.quantity for fill in match.fills), Decimal(0))
+    notional = sum((fill.notional for fill in match.fills), Decimal(0))
+    fees = sum((fill.fee or Decimal(0) for fill in match.fills), Decimal(0))
+    if match.fills:
+        outcome = "partially_filled" if match.remaining_quantity > 0 else "filled"
+    elif match.order.status == "open":
+        outcome = "resting"
+    else:
+        outcome = "rejected"
+    return {
+        "order_id": match.order.order_id,
+        "side": match.order.side,
+        "outcome": outcome,
+        "reason_code": match.decision.reason_code,
+        "reasons": list(match.decision.reasons),
+        "filled_quantity": str(filled),
+        "remaining_quantity": str(match.remaining_quantity),
+        "average_price": str(notional / filled) if filled else None,
+        "notional": str(notional),
+        "fees": str(fees),
+    }
 
 
 def _with_market_display(order: PaperOrder, market: MarketState) -> PaperOrder:

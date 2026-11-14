@@ -26,7 +26,10 @@ _ORDER_FIELDS = {
     "time_in_force": {"type": "string", "enum": ["gtc", "gtd", "fak", "fok"]},
     "post_only": {"type": "boolean"},
     "order_id": {"type": "string", "description": "Unique per data directory."},
-    "starting_cash": {"type": "string", "description": "Paper cash for this run. Default 10000."},
+    "starting_cash": {
+        "type": "string",
+        "description": "Account opening deposit (or isolated-run cash). Default 10000.",
+    },
     "data_dir": {"type": "string", "description": "SQLite data directory. Default .pm-trader."},
 }
 
@@ -128,8 +131,11 @@ TOOL_DEFINITIONS = [
         "name": "simulate",
         "description": (
             "Paper-match one order. Pass market to match against the live order book, or "
-            "market_fixture and book_fixture for an offline run. Returns fills, fees, the "
-            "decision reason, and a stored report with its run_id."
+            "market_fixture and book_fixture for an offline run. By default the order trades "
+            "the data directory's persistent paper account (cash and positions carry over, so "
+            "you can sell what you bought earlier); isolated=true runs a one-off from "
+            "starting_cash. Returns summary (filled/resting/rejected, average price, fees), "
+            "account, fills, and a stored report. A rejected order returns ok=false."
         ),
         "inputSchema": {
             "type": "object",
@@ -137,6 +143,7 @@ TOOL_DEFINITIONS = [
                 "market": _IDENT,
                 "market_fixture": {"type": "string"},
                 "book_fixture": {"type": "string"},
+                "isolated": {"type": "boolean", "description": "Skip the persistent account."},
                 **_ORDER_FIELDS,
             },
         },
@@ -260,6 +267,7 @@ def dispatch_tool(
                 book=book,
                 orders=(order,),
                 config=SimulationConfig(starting_cash=args.get("starting_cash", "10000")),
+                account=not bool(args.get("isolated", False)),
             )
         elif name == "replay":
             market = load_market_fixture(str(args["market_fixture"]))
