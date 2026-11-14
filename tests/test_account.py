@@ -80,3 +80,10 @@ def test_mcp_simulate_uses_account_by_default(tmp_path: Path):
     )
     assert second["ok"] is True, second["errors"]
     assert second["result"]["account"]["open_positions"] == {}
+
+
+def test_portfolio_reports_account_cash(tmp_path: Path):
+    _, bought = simulate(tmp_path, "--order-id", "b1", "--price", "0.67", "--size", "40", "--tif", "fak")
+    code, payload = run(["--data-dir", str(tmp_path), "portfolio"])
+    assert code == 0
+    assert payload["result"]["account"]["cash"] == bought["result"]["account"]["cash"]

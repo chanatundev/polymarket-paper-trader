@@ -74,7 +74,8 @@ def scan_market(market: MarketState, *, now: datetime | None = None) -> dict[str
         "question": market.question,
         "start_time": market.start_time,
         "end_time": market.end_time,
-        **time_to_end(market.end_time, now),
+        # Scan rows keep only the hour count; quote adds ends_within_24h.
+        "hours_to_end": time_to_end(market.end_time, now)["hours_to_end"],
         "active": market.active,
         "closed": market.closed,
         "accepting_orders": market.accepting_orders,
@@ -281,6 +282,7 @@ class ResearchService:
             "market": {
                 **scan_market(market),
                 "outcomes": market_outcomes(market, token_ids=True),
+                **time_to_end(market.end_time),
                 "event_slug": market.event_slug,
                 "category": market.category,
                 **market_trading_rules(market),
@@ -379,6 +381,8 @@ class ResearchService:
                 "open_positions": len(open_positions),
                 "positions": positions,
                 "totals": portfolio_totals(positions, marked=mark),
+                # Tradable balance of the persistent account (excludes --isolated runs).
+                "account": load_account(self.store.conn).to_dict(),
             },
             warnings=warnings,
             freshness=worst_freshness(book_freshness) if mark else "unknown",

@@ -329,7 +329,7 @@ def test_discover_and_quote_rows_carry_time_to_resolution(tmp_path: Path):
     soon = (datetime.now(timezone.utc) + timedelta(hours=5)).strftime("%Y-%m-%dT%H:%M:%SZ")
     service, _ = offline_service(tmp_path / "a", endDateIso=soon)
     row = service.discover(limit=1)["result"]["markets"][0]
-    assert row["ends_within_24h"] is True
+    assert "ends_within_24h" not in row  # scan rows stay compact; quote carries the flag
     assert Decimal("4.5") <= Decimal(row["hours_to_end"]) <= Decimal("5.0")
     quoted = service.quote(SLUG)["result"]["market"]
     assert quoted["ends_within_24h"] is True
@@ -337,7 +337,7 @@ def test_discover_and_quote_rows_carry_time_to_resolution(tmp_path: Path):
     assert service.discover(limit=1)["assumptions"]["date_only_end_time_is_end_of_day_utc"] is True
     past, _ = offline_service(tmp_path / "b", endDateIso="2020-01-01")
     row = past.discover(limit=1)["result"]["markets"][0]
-    assert Decimal(row["hours_to_end"]) < 0 and row["ends_within_24h"] is False
+    assert Decimal(row["hours_to_end"]) < 0
     far, _ = offline_service(tmp_path / "c")
     row = far.quote(SLUG)["result"]["market"]
     assert Decimal(row["hours_to_end"]) > 24 and row["ends_within_24h"] is False

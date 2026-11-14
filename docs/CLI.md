@@ -157,8 +157,8 @@ Gamma reports them, `stats`: `volume_24hr`, `volume_1wk`, `volume`,
 executable; use `quote` for the live book.
 
 Rows also carry `hours_to_end` (hours from now to `end_time`, one decimal string,
-negative once passed, `null` if unknown) and `ends_within_24h` (true only when
-the end is 0-24h away; false when unknown or already past). A date-only
+negative once passed, `null` if unknown). `quote` also adds `ends_within_24h`
+(true only when the end is 0-24h away; false when unknown or already past). A date-only
 `end_time` such as `2026-11-14` is assumed to end at the end of that day in UTC
 (the envelope's `date_only_end_time_is_end_of_day_utc` assumption records this).
 
@@ -276,7 +276,7 @@ per outcome token: `quantity`, `average_price`, `cost_basis`, `realized_pnl`
 book for up to 25 open positions and adds `mark_price` (midpoint),
 `market_value`, and `unrealized_pnl`. The portfolio is a read-only roll-up of
 every stored fill, including `--isolated` runs; the `account` returned by
-`simulate` is the tradable balance.
+`simulate` is the tradable balance, and `portfolio` repeats it as `account`.
 
 Each position also has `net_pnl` = `realized_pnl` + `unrealized_pnl` (counted
 as 0 if unmarked) - `fees`, and the result has a `totals` object: `cost_basis`,
