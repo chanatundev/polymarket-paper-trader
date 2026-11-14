@@ -26,7 +26,7 @@ include = ["pm_trader*", "dashboard*"]
 
 [tool.setuptools.package-data]
 pm_trader = ["gui_assets/*.html", "gui_assets/*.css", "gui_assets/*.js"]
-dashboard = ["*.html", "brand/*.svg", "brand/*.ttf"]
+dashboard = ["*.html", "*.js", "brand/*.svg", "brand/*.ttf"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

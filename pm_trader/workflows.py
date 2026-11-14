@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -165,8 +165,9 @@ class ResearchService:
         config: SimulationConfig | None = None,
         dataset_id: str | None = None,
     ) -> dict[str, Any]:
+        display_orders = tuple(_with_market_display(order, market) for order in orders)
         simulation = SimulationEngine(self.store).run(
-            market=market, book=book, orders=orders, config=config, dataset_id=dataset_id
+            market=market, book=book, orders=display_orders, config=config, dataset_id=dataset_id
         )
         _record(self, "simulate", market, simulation)
         warnings = list(simulation.report.warnings)
@@ -194,8 +195,9 @@ class ResearchService:
         orders: Iterable[PaperOrder],
         config: SimulationConfig | None = None,
     ) -> dict[str, Any]:
+        display_orders = tuple(_with_market_display(order, market) for order in orders)
         simulation = ReplayEngine(self.store, limits=self.limits).replay_jsonl(
-            dataset_path, market=market, orders=orders, config=config
+            dataset_path, market=market, orders=display_orders, config=config
         )
         _record(self, "replay", market, simulation)
         if not cli_is_logging() and self.store.db_path.name != ":memory:":
@@ -273,6 +275,16 @@ class ResearchService:
             envelope(result=market),
         )
         return market
+
+
+def _with_market_display(order: PaperOrder, market: MarketState) -> PaperOrder:
+    metadata = dict(order.metadata)
+    metadata["market_question"] = metadata.get("market_question") or market.question
+    metadata["market_slug"] = metadata.get("market_slug") or market.slug
+    token = next((item for item in market.tokens if item.token_id == order.asset_id), None)
+    if token is not None:
+        metadata["outcome"] = metadata.get("outcome") or token.outcome
+    return replace(order, metadata=metadata)
 
 
 def _record(service: ResearchService, command: str, market: MarketState, simulation: Any) -> None:
