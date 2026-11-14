@@ -5,7 +5,8 @@ from __future__ import annotations
 import json
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, replace
-from decimal import Decimal
+from datetime import datetime
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -17,12 +18,17 @@ from .errors import LocalValidationError
 from .market_data import (
     aggregate_positions,
     book_summary,
+    compact_book,
+    estimate_fill,
     load_stored_fills,
     mark_position,
     market_outcomes,
     market_stats,
     market_trading_rules,
+    portfolio_totals,
     price_summary,
+    time_to_end,
+    worst_freshness,
 )
 from .models import BookSnapshot, Decision, MarketState, PaperOrder, SimulationConfig
 from .normalizers import make_provenance, normalize_book, normalize_market
@@ -50,8 +56,12 @@ DISCOVERY_ORDERS = {
 }
 
 
-def scan_market(market: MarketState) -> dict[str, Any]:
-    """Discovery row small enough to scan a page. Inspect still returns the full record."""
+def scan_market(market: MarketState, *, now: datetime | None = None) -> dict[str, Any]:
+    """Discovery row small enough to scan a page. Inspect still returns the full record.
+
+    ``hours_to_end`` is measured from ``now`` (default: current UTC time); a date-only
+    ``end_time`` counts as the end of that day in UTC.
+    """
 
     reasons = {
         key: market.unknown_reasons[key]
@@ -64,6 +74,7 @@ def scan_market(market: MarketState) -> dict[str, Any]:
         "question": market.question,
         "start_time": market.start_time,
         "end_time": market.end_time,
+        **time_to_end(market.end_time, now),
         "active": market.active,
         "closed": market.closed,
         "accepting_orders": market.accepting_orders,
@@ -78,6 +89,19 @@ def scan_market(market: MarketState) -> dict[str, Any]:
     if reasons:
         row["unknown_reasons"] = reasons
     return row
+
+
+_END_TIME_ASSUMPTION = {"date_only_end_time_is_end_of_day_utc": True}
+
+
+def _decimal_arg(name: str, value: Any) -> Decimal:
+    try:
+        result = value if isinstance(value, Decimal) else Decimal(str(value))
+    except InvalidOperation:
+        result = None
+    if result is None or not result.is_finite():
+        raise LocalValidationError(f"{name} must be a decimal number", details={name: str(value)})
+    return result
 
 
 def envelope(
@@ -142,7 +166,11 @@ class ResearchService:
                 },
                 warnings=(),
                 provenance_ids=(found.observation.provenance.observation_id,),
-                assumptions={"provider": "gamma", "route": "/public-search"},
+                assumptions={
+                    "provider": "gamma",
+                    "route": "/public-search",
+                    **_END_TIME_ASSUMPTION,
+                },
             )
         else:
             filters: dict[str, Any] = {}
@@ -170,6 +198,7 @@ class ResearchService:
                     "provider": "gamma",
                     "route": "/markets/keyset",
                     "pagination": "keyset",
+                    **_END_TIME_ASSUMPTION,
                 },
             )
         _record_service_command(
@@ -207,39 +236,76 @@ class ResearchService:
         )
 
     def quote(
-        self, identifier: str, *, outcome: str | None = None, depth: int = 5
+        self,
+        identifier: str,
+        *,
+        outcome: str | None = None,
+        depth: int = 5,
+        side: str | None = None,
+        size: Decimal | str | None = None,
+        price: Decimal | str | None = None,
+        compact: bool = False,
     ) -> dict[str, Any]:
-        """Live market rules plus a best-first book summary for one or every outcome."""
+        """Live market rules plus a best-first book summary for one or every outcome.
+
+        With ``side`` and ``size`` (and a required ``outcome``) it also returns an
+        ``estimate``: a taker walk of that outcome's book, optionally capped at ``price``.
+        ``compact`` keeps only top-of-book numbers per outcome.
+        """
 
         if depth < 1 or depth > 50:
             raise LocalValidationError("depth must be between 1 and 50", details={"depth": depth})
+        wants_estimate = side is not None or size is not None or price is not None
+        if wants_estimate:
+            if side is None or size is None:
+                raise LocalValidationError("side and size are required together for an estimate")
+            if side.lower() not in {"buy", "sell"}:
+                raise LocalValidationError("side must be buy or sell", details={"side": side})
+            if not outcome:
+                raise LocalValidationError("an estimate needs --outcome (one book to walk)")
+            size = _decimal_arg("size", size)
+            price = None if price is None else _decimal_arg("price", price)
         market = self._market(identifier)
         tokens = [market.token_for(outcome)] if outcome else list(market.tokens)
         books = []
+        snapshots = []
         provenance = [market.provenance.observation_id] if market.provenance else []
         for token in tokens:
             observation = self.clob.get_book(token.token_id)
             provenance.append(observation.provenance.observation_id)
+            snapshots.append(observation.value)
             books.append(
                 {"outcome": token.outcome, **book_summary(observation.value, depth=depth)}
             )
-        return envelope(
-            result={
-                "market": {
-                    **scan_market(market),
-                    "outcomes": market_outcomes(market, token_ids=True),
-                    "event_slug": market.event_slug,
-                    "category": market.category,
-                    **market_trading_rules(market),
-                },
-                "books": books,
+        result: dict[str, Any] = {
+            "market": {
+                **scan_market(market),
+                "outcomes": market_outcomes(market, token_ids=True),
+                "event_slug": market.event_slug,
+                "category": market.category,
+                **market_trading_rules(market),
             },
-            freshness=books[0]["freshness"] if books else "unknown",
+            "books": [compact_book(book) for book in books] if compact else books,
+        }
+        if wants_estimate:
+            result["estimate"] = estimate_fill(
+                snapshots[0], market, side=side, size=size, price=price
+            )
+        return envelope(
+            result=result,
+            freshness=worst_freshness(book["freshness"] for book in books),
             provenance_ids=provenance,
             assumptions={
                 "book_is_point_in_time": True,
                 "gamma_stats_are_indicative_not_executable": True,
                 "prices_are_probabilities_per_share_paying_1": True,
+                "freshness_is_book_age_at_receipt_fresh_within_30s": True,
+                **_END_TIME_ASSUMPTION,
+                **(
+                    {"estimate_is_taker_walk_not_a_simulation": True, "estimate_fees": "per_level"}
+                    if wants_estimate
+                    else {}
+                ),
             },
         )
 
@@ -282,6 +348,7 @@ class ResearchService:
         positions = aggregate_positions(fills, orders)
         warnings = ["fill_scan_truncated"] if truncated else []
         provenance: list[str] = []
+        book_freshness: list[str] = []
         if mark:
             marked = []
             for index, row in enumerate(positions):
@@ -296,23 +363,33 @@ class ResearchService:
                     marked.append(mark_position(row, None))
                     continue
                 provenance.append(observation.provenance.observation_id)
-                midpoint = book_summary(observation.value, depth=1)["midpoint"]
+                summary = book_summary(observation.value, depth=1)
+                book_freshness.append(summary["freshness"])
+                midpoint = summary["midpoint"]
                 marked.append(mark_position(row, None if midpoint is None else Decimal(midpoint)))
             positions = marked
         open_positions = [row for row in positions if row.get("quantity") not in {"0", None}]
+        if mark:
+            unmarked = sum(1 for row in open_positions if row.get("market_value") is None)
+            if unmarked:
+                warnings.append(f"unmarked_open_positions:{unmarked}")
         return envelope(
             result={
                 "fills_scanned": len(fills),
                 "open_positions": len(open_positions),
                 "positions": positions,
+                "totals": portfolio_totals(positions, marked=mark),
             },
             warnings=warnings,
-            freshness="fresh" if mark else "unknown",
+            freshness=worst_freshness(book_freshness) if mark else "unknown",
             provenance_ids=provenance,
             assumptions={
                 "aggregates_independent_runs": True,
                 "cost_method": "average_cost",
                 "realized_pnl_excludes_fees": True,
+                "unrealized_pnl_is_midpoint_based_and_excludes_exit_fees": True,
+                "net_pnl": "realized_pnl + unrealized_pnl (0 if unmarked) - fees",
+                "totals_market_value_and_unrealized_cover_marked_positions_only": True,
                 "mark": "live_book_midpoint" if mark else "none",
                 "paper_pnl_is_not_live_pnl": True,
             },

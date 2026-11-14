@@ -177,7 +177,7 @@ def test_discover_page_of_100_is_a_compact_scan(tmp_path: Path, capsys):
 def test_discover_keeps_a_fitting_prefix_when_one_market_is_too_large(tmp_path: Path, capsys):
     markets = [
         _example_market(conditionId="0xsmall", slug="small-market", question="small"),
-        _example_market(conditionId="0xfat", slug="fat-market", question="Q" * 70_000),
+        _example_market(conditionId="0xfat", slug="fat-market", question="Q" * 90_000),
     ]
     fixture_path = tmp_path / "mixed.json"
     fixture_path.write_text(json.dumps(_keyset_page(markets)), encoding="utf-8")
@@ -207,7 +207,7 @@ def test_discover_exits_nonzero_when_nothing_fits(tmp_path: Path, capsys):
     fixture_path.write_text(
         json.dumps(
             _keyset_page(
-                [_example_market(conditionId="0xfat", slug="fat-market", question="Q" * 70_000)]
+                [_example_market(conditionId="0xfat", slug="fat-market", question="Q" * 90_000)]
             )
         ),
         encoding="utf-8",
