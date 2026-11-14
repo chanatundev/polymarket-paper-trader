@@ -5,12 +5,24 @@ from __future__ import annotations
 import json
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, replace
+from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 from .activity import append_activity, cli_is_logging, record_command, record_simulation
 from .api import CLOBAdapter, FixtureTransport, GammaAdapter, ResourceLimits
+from .errors import LocalValidationError
+from .market_data import (
+    aggregate_positions,
+    book_summary,
+    load_stored_fills,
+    mark_position,
+    market_outcomes,
+    market_stats,
+    market_trading_rules,
+    price_summary,
+)
 from .models import BookSnapshot, Decision, MarketState, PaperOrder, SimulationConfig
 from .normalizers import make_provenance, normalize_book, normalize_market
 from .recording import ReplayEngine
@@ -26,6 +38,15 @@ def as_jsonable(value: Any) -> Any:
         return json.loads(canonical_json(value))
     except (TypeError, ValueError):
         return sanitize(value)
+
+
+DISCOVERY_ORDERS = {
+    "volume_24hr": "volume24hr",
+    "volume": "volumeNum",
+    "liquidity": "liquidityNum",
+    "end_date": "endDate",
+    "start_date": "startDate",
+}
 
 
 def scan_market(market: MarketState) -> dict[str, Any]:
@@ -48,7 +69,11 @@ def scan_market(market: MarketState) -> dict[str, Any]:
         "enable_order_book": market.enable_order_book,
         "freshness": market.freshness.value,
         "provenance_id": market.provenance.observation_id if market.provenance else None,
+        "outcomes": market_outcomes(market),
     }
+    stats = market_stats(market)
+    if stats:
+        row["stats"] = stats
     if reasons:
         row["unknown_reasons"] = reasons
     return row
@@ -89,8 +114,20 @@ class ResearchService:
             self.clob.activity_dir = self.store.db_path.parent
 
     def discover(
-        self, *, query: str | None = None, limit: int = 20, cursor: str | None = None
+        self,
+        *,
+        query: str | None = None,
+        limit: int = 20,
+        cursor: str | None = None,
+        order: str | None = None,
+        ascending: bool | None = None,
+        open_only: bool = False,
     ) -> dict[str, Any]:
+        if order is not None and order not in DISCOVERY_ORDERS:
+            raise LocalValidationError(
+                "unsupported discovery order",
+                details={"order": order, "allowed": sorted(DISCOVERY_ORDERS)},
+            )
         if query:
             found = self.gamma.search(query, limit=limit)
             payload = envelope(
@@ -107,7 +144,19 @@ class ResearchService:
                 assumptions={"provider": "gamma", "route": "/public-search"},
             )
         else:
-            page = self.gamma.list_markets(limit=limit, after_cursor=cursor)
+            filters: dict[str, Any] = {}
+            if order:
+                filters["order"] = DISCOVERY_ORDERS[order]
+            if open_only:
+                filters["closed"] = "false"
+                filters["active"] = "true"
+            page = self.gamma.list_markets(
+                limit=limit,
+                after_cursor=cursor,
+                # Ranked lists are most useful largest-first unless the caller says otherwise.
+                ascending=(order is None) if ascending is None else ascending,
+                filters=filters,
+            )
             payload = envelope(
                 result={
                     "markets": [scan_market(market) for market in page.items],
@@ -155,6 +204,121 @@ class ResearchService:
             provenance_ids=(observation.provenance.observation_id,),
             assumptions={"executable_book_state": True, "context_inputs_are_not_executable": True},
         )
+
+    def quote(
+        self, identifier: str, *, outcome: str | None = None, depth: int = 5
+    ) -> dict[str, Any]:
+        """Live market rules plus a best-first book summary for one or every outcome."""
+
+        if depth < 1 or depth > 50:
+            raise LocalValidationError("depth must be between 1 and 50", details={"depth": depth})
+        market = self._market(identifier)
+        tokens = [market.token_for(outcome)] if outcome else list(market.tokens)
+        books = []
+        provenance = [market.provenance.observation_id] if market.provenance else []
+        for token in tokens:
+            observation = self.clob.get_book(token.token_id)
+            provenance.append(observation.provenance.observation_id)
+            books.append(
+                {"outcome": token.outcome, **book_summary(observation.value, depth=depth)}
+            )
+        return envelope(
+            result={
+                "market": {
+                    **scan_market(market),
+                    "outcomes": market_outcomes(market, token_ids=True),
+                    "event_slug": market.event_slug,
+                    "category": market.category,
+                    **market_trading_rules(market),
+                },
+                "books": books,
+            },
+            freshness=books[0]["freshness"] if books else "unknown",
+            provenance_ids=provenance,
+            assumptions={
+                "book_is_point_in_time": True,
+                "gamma_stats_are_indicative_not_executable": True,
+                "prices_are_probabilities_per_share_paying_1": True,
+            },
+        )
+
+    def price_history(
+        self,
+        identifier: str,
+        *,
+        outcome: str = "Yes",
+        interval: str = "1w",
+        fidelity: int | None = None,
+        max_points: int = 120,
+    ) -> dict[str, Any]:
+        if max_points < 1 or max_points > 1000:
+            raise LocalValidationError(
+                "max_points must be between 1 and 1000", details={"max_points": max_points}
+            )
+        market = self._market(identifier)
+        token = market.token_for(outcome)
+        observation = self.clob.get_price_history(
+            token.token_id, interval=interval, fidelity=fidelity
+        )
+        return envelope(
+            result={
+                "market": {"condition_id": market.condition_id, "slug": market.slug,
+                           "question": market.question},
+                "outcome": token.outcome,
+                "token_id": token.token_id,
+                "interval": interval,
+                "fidelity_minutes": fidelity,
+                **price_summary(observation.value, max_points=max_points),
+            },
+            provenance_ids=(observation.provenance.observation_id,),
+            assumptions={"history_is_context_not_executable": True},
+        )
+
+    def portfolio(self, *, mark: bool = False, max_fills: int = 5000) -> dict[str, Any]:
+        """Net paper exposure across every stored run, optionally marked to live midpoints."""
+
+        fills, orders, truncated = load_stored_fills(self.store.conn, limit=max_fills)
+        positions = aggregate_positions(fills, orders)
+        warnings = ["fill_scan_truncated"] if truncated else []
+        provenance: list[str] = []
+        if mark:
+            marked = []
+            for index, row in enumerate(positions):
+                quantity = row.get("quantity") or "0"
+                if index >= 25 or quantity in {"0", None}:
+                    marked.append(mark_position(row, None))
+                    continue
+                try:
+                    observation = self.clob.get_book(str(row["asset_id"]))
+                except Exception:  # noqa: BLE001 - one failed mark must not hide the rest.
+                    warnings.append(f"mark_unavailable:{row['asset_id']}")
+                    marked.append(mark_position(row, None))
+                    continue
+                provenance.append(observation.provenance.observation_id)
+                midpoint = book_summary(observation.value, depth=1)["midpoint"]
+                marked.append(mark_position(row, None if midpoint is None else Decimal(midpoint)))
+            positions = marked
+        open_positions = [row for row in positions if row.get("quantity") not in {"0", None}]
+        return envelope(
+            result={
+                "fills_scanned": len(fills),
+                "open_positions": len(open_positions),
+                "positions": positions,
+            },
+            warnings=warnings,
+            freshness="fresh" if mark else "unknown",
+            provenance_ids=provenance,
+            assumptions={
+                "aggregates_independent_runs": True,
+                "cost_method": "average_cost",
+                "realized_pnl_excludes_fees": True,
+                "mark": "live_book_midpoint" if mark else "none",
+                "paper_pnl_is_not_live_pnl": True,
+            },
+        )
+
+    def live_book(self, market: MarketState, outcome: str) -> BookSnapshot:
+        return self.clob.get_book(market.token_for(outcome).token_id).value
 
     def simulate(
         self,

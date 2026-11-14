@@ -142,6 +142,20 @@ freshness, and provenance id. Missing start or end times stay null with an
 `unknown_reasons` entry. Use `inspect market` or `market get` for the full
 canonical record, including tokens, fees, and unknown provider fields.
 
+Rank and filter keyset pages with `--order` (`volume_24hr`, `volume`,
+`liquidity`, `end_date`, `start_date`; largest first unless `--ascending`) and
+`--open-only` (active, not closed):
+
+```bash
+uv run python -m pm_trader discover --order volume_24hr --open-only --limit 20
+```
+
+Each scan row includes `outcomes` (label and indicative Gamma price) and, when
+Gamma reports them, `stats`: `volume_24hr`, `volume_1wk`, `volume`,
+`liquidity`, `best_bid`, `best_ask`, `spread`, `last_trade_price`,
+`one_day_price_change`, and `one_week_price_change`. These are indicative, not
+executable; use `quote` for the live book.
+
 ### Search public markets
 
 Pass `--query` to use public search instead of keyset pagination:
@@ -176,6 +190,59 @@ uv run python -m pm_trader market get will-the-example-event-happen-by-2030
 Without `--fixture`, `market get` resolves a slug through Gamma. An identifier
 starting with `0x` is resolved through the public CLOB market-info route.
 
+## Live market data for agents
+
+These commands make bounded, unauthenticated public reads and return compact,
+decision-ready numbers. Use them between discovery and simulation.
+
+### Quote a market
+
+```bash
+uv run python -m pm_trader quote xi-jinping-out-before-2027
+uv run python -m pm_trader quote xi-jinping-out-before-2027 --outcome Yes --depth 10
+```
+
+The result has the market's trading rules (`tick_size`, `min_order_size`,
+`neg_risk`, `fees_enabled`, `fee_schedule`), outcomes with token ids, and one
+book summary per outcome (or only `--outcome`): `best_bid`, `best_ask`,
+`midpoint`, `spread`, level counts, best-first `bids`/`asks` up to `--depth`
+(1-50, default 5), and `depth_near_mid` (shares and notional within 1c and 5c of
+the midpoint). Book timestamps are ISO-8601 UTC.
+
+### Price history
+
+```bash
+uv run python -m pm_trader prices xi-jinping-out-before-2027 --outcome Yes \
+  --interval 1w --fidelity 60 --max-points 120
+```
+
+Returns `open`, `close`, `high`, `low`, `change`, `start`/`end`, the raw point
+count, and an evenly downsampled `points` series (`--max-points`, 1-1000,
+always including the last point). Intervals: `1h`, `6h`, `1d`, `1w`, `1m`,
+`max`, `all`. History is context, not an executable price.
+
+### Paper portfolio
+
+```bash
+uv run python -m pm_trader --data-dir .pm-trader portfolio
+uv run python -m pm_trader --data-dir .pm-trader portfolio --mark
+```
+
+Aggregates every stored paper fill in the data directory into net positions
+per outcome token: `quantity`, `average_price`, `cost_basis`, `realized_pnl`
+(average cost, fees excluded), `fees`, and `fills`. `--mark` reads the live
+book for up to 25 open positions and adds `mark_price` (midpoint),
+`market_value`, and `unrealized_pnl`. Each simulation is still an independent
+run with its own starting cash; the portfolio is a read-only roll-up across
+them.
+
+### MCP tools
+
+The MCP server exposes the same data as `quote_market`, `price_history`, and
+`paper_portfolio`. `discover_markets` accepts `order`, `ascending`, and
+`open_only`; `inspect_market`, `inspect_book`, and `simulate` accept a live
+`market` (slug or condition id) in place of fixture paths.
+
 ## Inspect normalized state
 
 Inspection is fixture-based and does not make a network request:
@@ -198,8 +265,17 @@ by the simulation examples below.
 
 ## Simulate a paper order
 
-`simulate` matches one paper order against one declared book fixture and persists
-the report in the selected SQLite data directory:
+`simulate` matches one paper order against one book and persists the report in
+the selected SQLite data directory. Pass `--market` to match against the live
+public order book:
+
+```bash
+uv run python -m pm_trader --data-dir .pm-trader simulate \
+  --market xi-jinping-out-before-2027 --outcome Yes \
+  --side buy --price 0.02 --size 100 --tif fak --order-id live-1
+```
+
+Or pass both fixture options for an offline, reproducible run:
 
 ```bash
 uv run python -m pm_trader --data-dir .pm-trader-demo simulate \
@@ -225,6 +301,8 @@ Available simulation options:
 
 | Option | Default | Meaning |
 | --- | --- | --- |
+| `--market` | unset | Live market slug or `0x` condition id; fetches the live book. |
+| `--market-fixture` / `--book-fixture` | unset | Offline market and book JSON; use both instead of `--market`. |
 | `--order-id` | `cli-order-1` | Stable paper-order identifier. |
 | `--side` | `buy` | `buy` or `sell`. |
 | `--outcome` | `Yes` | Outcome label or token resolved from the market fixture. |
