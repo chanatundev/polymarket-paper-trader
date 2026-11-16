@@ -17,16 +17,126 @@ from .storage import SQLiteStore
 from .activity import record_tool
 from .workflows import ResearchService, envelope, load_book_fixture, load_market_fixture
 
+_IDENT = {"type": "string", "description": "Market slug or 0x condition id."}
+_ORDER_FIELDS = {
+    "outcome": {"type": "string", "description": "Outcome label, e.g. Yes or No. Default Yes."},
+    "side": {"type": "string", "enum": ["buy", "sell"], "description": "Default buy."},
+    "price": {"type": "string", "description": "Decimal limit price in (0, 1). Default 0.66."},
+    "size": {"type": "string", "description": "Shares. Must meet the market min_order_size."},
+    "time_in_force": {"type": "string", "enum": ["gtc", "gtd", "fak", "fok"]},
+    "post_only": {"type": "boolean"},
+    "order_id": {"type": "string", "description": "Unique per data directory."},
+    "starting_cash": {
+        "type": "string",
+        "description": "Account opening deposit (or isolated-run cash). Default 10000.",
+    },
+    "data_dir": {"type": "string", "description": "SQLite data directory. Default .pm-trader."},
+}
+
 TOOL_DEFINITIONS = [
     {
         "name": "discover_markets",
-        "description": "Discover public markets through keyset pagination or public search.",
+        "description": (
+            "Find public markets. Each row includes outcomes with token ids and indicative "
+            "prices, plus volume, liquidity, best bid/ask and recent price change when Gamma "
+            "reports them. Use order=volume_24hr with open_only=true to find active markets."
+        ),
         "inputSchema": {
             "type": "object",
             "properties": {
-                "query": {"type": "string"},
-                "limit": {"type": "integer"},
-                "cursor": {"type": "string"},
+                "query": {"type": "string", "description": "Free-text search (max 50 rows)."},
+                "limit": {"type": "integer", "description": "1-100. Default 20."},
+                "cursor": {"type": "string", "description": "next_cursor from a previous page."},
+                "order": {
+                    "type": "string",
+                    "enum": ["volume_24hr", "volume", "liquidity", "end_date", "start_date"],
+                    "description": "Rank results, largest first unless ascending=true.",
+                },
+                "ascending": {"type": "boolean"},
+                "open_only": {"type": "boolean", "description": "Only active, unclosed markets."},
+            },
+        },
+    },
+    {
+        "name": "quote_market",
+        "description": (
+            "Live trading rules (tick, min size, fees incl. fee formula, hours_to_end) and a "
+            "best-first order-book summary for each outcome: best bid/ask, midpoint, spread, "
+            "age_seconds/freshness, top levels and depth near the midpoint. Pass outcome + side "
+            "+ size (and optionally a limit price) to also get a pre-trade `estimate`: vwap, "
+            "worst price, fee, slippage vs midpoint and immediate mark loss. Use compact=true "
+            "for top-of-book numbers only. Call this before choosing a paper order."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["market"],
+            "properties": {
+                "market": _IDENT,
+                "outcome": {"type": "string", "description": "Omit to quote every outcome."},
+                "depth": {"type": "integer", "description": "Levels per side, 1-50. Default 5."},
+                "side": {
+                    "type": "string",
+                    "enum": ["buy", "sell"],
+                    "description": "With outcome and size: estimate a taker fill (buy walks asks, "
+                    "sell walks bids).",
+                },
+                "size": {"type": "string", "description": "Shares to estimate. Needs side."},
+                "price": {
+                    "type": "string",
+                    "description": "Optional limit price; levels beyond it are not used.",
+                },
+                "compact": {
+                    "type": "boolean",
+                    "description": "Per book only outcome, best bid/ask, midpoint, spread, "
+                    "age_seconds and depth within 1c.",
+                },
+            },
+        },
+    },
+    {
+        "name": "price_history",
+        "description": "Live price history for one outcome with open/close/high/low/change.",
+        "inputSchema": {
+            "type": "object",
+            "required": ["market"],
+            "properties": {
+                "market": _IDENT,
+                "outcome": {"type": "string", "description": "Default Yes."},
+                "interval": {
+                    "type": "string",
+                    "enum": ["1h", "6h", "1d", "1w", "1m", "max", "all"],
+                    "description": "Default 1w.",
+                },
+                "fidelity": {"type": "integer", "description": "Bar size in minutes."},
+                "max_points": {"type": "integer", "description": "1-1000. Default 120."},
+            },
+        },
+    },
+    {
+        "name": "paper_portfolio",
+        "description": (
+            "Net paper positions across every stored run: quantity, average price, cost basis, "
+            "realized P&L, fees and net_pnl, plus totals. With mark=true, adds live midpoint value "
+            "and unrealized P&L (midpoint-based, excludes exit fees)."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"mark": {"type": "boolean"}, "data_dir": _ORDER_FIELDS["data_dir"]},
+        },
+    },
+    {
+        "name": "settle_market",
+        "description": (
+            "After a market resolves (closed with final 0/1 outcome prices), pay out the "
+            "paper account's positions in it: winners at 1 per share, losers at 0. Returns "
+            "MARKET_NOT_RESOLVED (ok=false) while the market is still open."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "market": _IDENT,
+                "market_fixture": {"type": "string", "description": "Offline market JSON."},
+                "data_dir": _ORDER_FIELDS["data_dir"],
             },
         },
     },
@@ -35,8 +145,10 @@ TOOL_DEFINITIONS = [
         "description": "Inspect a normalized market state and its unknown fields.",
         "inputSchema": {
             "type": "object",
-            "required": ["fixture"],
-            "properties": {"fixture": {"type": "string"}},
+            "properties": {
+                "market": _IDENT,
+                "fixture": {"type": "string", "description": "Local JSON instead of a live read."},
+            },
         },
     },
     {
@@ -44,23 +156,31 @@ TOOL_DEFINITIONS = [
         "description": "Inspect a normalized executable book snapshot.",
         "inputSchema": {
             "type": "object",
-            "required": ["fixture"],
-            "properties": {"fixture": {"type": "string"}},
+            "properties": {
+                "market": _IDENT,
+                "outcome": {"type": "string", "description": "Default Yes (live reads only)."},
+                "fixture": {"type": "string", "description": "Local JSON instead of a live read."},
+            },
         },
     },
     {
         "name": "simulate",
-        "description": "Simulate paper orders against a declared book fixture.",
+        "description": (
+            "Paper-match one order. Pass market to match against the live order book, or "
+            "market_fixture and book_fixture for an offline run. By default the order trades "
+            "the data directory's persistent paper account (cash and positions carry over, so "
+            "you can sell what you bought earlier); isolated=true runs a one-off from "
+            "starting_cash. Returns summary (filled/resting/rejected, average price, fees), "
+            "account, fills, and a stored report. A rejected order returns ok=false."
+        ),
         "inputSchema": {
             "type": "object",
-            "required": ["market_fixture", "book_fixture"],
             "properties": {
+                "market": _IDENT,
                 "market_fixture": {"type": "string"},
                 "book_fixture": {"type": "string"},
-                "side": {"type": "string"},
-                "price": {"type": "string"},
-                "size": {"type": "string"},
-                "time_in_force": {"type": "string"},
+                "isolated": {"type": "boolean", "description": "Skip the persistent account."},
+                **_ORDER_FIELDS,
             },
         },
     },
@@ -70,7 +190,11 @@ TOOL_DEFINITIONS = [
         "inputSchema": {
             "type": "object",
             "required": ["dataset", "market_fixture"],
-            "properties": {"dataset": {"type": "string"}, "market_fixture": {"type": "string"}},
+            "properties": {
+                "dataset": {"type": "string"},
+                "market_fixture": {"type": "string"},
+                **_ORDER_FIELDS,
+            },
         },
     },
     {
@@ -112,8 +236,46 @@ def dispatch_tool(
     try:
         if name == "discover_markets":
             payload = workflow.discover(
-                query=args.get("query"), limit=int(args.get("limit", 20)), cursor=args.get("cursor")
+                query=args.get("query"),
+                limit=int(args.get("limit", 20)),
+                cursor=args.get("cursor"),
+                order=args.get("order"),
+                ascending=args.get("ascending"),
+                open_only=bool(args.get("open_only", False)),
             )
+        elif name == "quote_market":
+            payload = workflow.quote(
+                str(args["market"]),
+                outcome=args.get("outcome"),
+                depth=int(args.get("depth", 5)),
+                side=args.get("side"),
+                size=args.get("size"),
+                price=args.get("price"),
+                compact=bool(args.get("compact", False)),
+            )
+        elif name == "price_history":
+            fidelity = args.get("fidelity")
+            payload = workflow.price_history(
+                str(args["market"]),
+                outcome=str(args.get("outcome", "Yes")),
+                interval=str(args.get("interval", "1w")),
+                fidelity=None if fidelity is None else int(fidelity),
+                max_points=int(args.get("max_points", 120)),
+            )
+        elif name == "settle_market":
+            market = (
+                load_market_fixture(str(args["market_fixture"]))
+                if "market_fixture" in args
+                else workflow._market(str(args["market"]))
+            )
+            payload = workflow.settle(market)
+        elif name == "paper_portfolio":
+            payload = workflow.portfolio(mark=bool(args.get("mark", False)))
+        elif name == "inspect_market" and "fixture" not in args:
+            payload = workflow.inspect_market(str(args["market"]))
+        elif name == "inspect_book" and "fixture" not in args:
+            market = workflow._market(str(args["market"]))
+            payload = workflow.inspect_book(market, str(args.get("outcome", "Yes")))
         elif name == "inspect_market":
             market = load_market_fixture(str(args["fixture"]))
             payload = envelope(
@@ -129,8 +291,12 @@ def dispatch_tool(
                 provenance_ids=(book.provenance.observation_id,) if book.provenance else (),
             )
         elif name == "simulate":
-            market = load_market_fixture(str(args["market_fixture"]))
-            book = load_book_fixture(str(args["book_fixture"]))
+            if "market" in args:
+                market = workflow._market(str(args["market"]))
+                book = workflow.live_book(market, str(args.get("outcome", "Yes")))
+            else:
+                market = load_market_fixture(str(args["market_fixture"]))
+                book = load_book_fixture(str(args["book_fixture"]))
             token = market.token_for(str(args.get("outcome", "Yes")))
             order = PaperOrder(
                 order_id=str(args.get("order_id", "mcp-order-1")),
@@ -148,6 +314,7 @@ def dispatch_tool(
                 book=book,
                 orders=(order,),
                 config=SimulationConfig(starting_cash=args.get("starting_cash", "10000")),
+                account=not bool(args.get("isolated", False)),
             )
         elif name == "replay":
             market = load_market_fixture(str(args["market_fixture"]))

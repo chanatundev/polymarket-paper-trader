@@ -27,6 +27,22 @@ uv run python -m pm_trader simulate \
 uv run python -m pm_trader --data-dir .pm-trader gui
 ```
 
+Agent loop against live public data (paper fills only):
+
+```bash
+uv run python -m pm_trader discover --order volume_24hr --open-only --limit 10
+uv run python -m pm_trader quote <slug> [--outcome Yes --side buy --size 50]  # book, depth, rules, fill estimate
+uv run python -m pm_trader prices <slug> --interval 1w   # recent movement
+uv run python -m pm_trader simulate --market <slug> --outcome Yes --price 0.55 --size 20 --tif fak --order-id my-1
+uv run python -m pm_trader simulate --market <slug> --outcome Yes --side sell --price 0.60 --size 10 --tif fak --order-id my-2
+uv run python -m pm_trader portfolio --mark              # net paper exposure and P&L
+uv run python -m pm_trader settle <slug>                 # pay out once the market resolves
+```
+
+Simulations in one data directory share a persistent paper account, so later
+orders can sell earlier positions. A rejected order returns `ok: false` and
+exit status 1.
+
 The CLI returns bounded structured envelopes with `result`, `warnings`, `freshness`, `provenance_ids`, `assumptions`, and `errors`.
 
 The GUI listens on `127.0.0.1` and reads the selected SQLite store without
